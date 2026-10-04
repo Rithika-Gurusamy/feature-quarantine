@@ -99,3 +99,40 @@ async def forgot_password(request: Request, payload: ForgotPasswordRequest):
         "status": "success",
         "message": "If the account exists, a recovery code has been sent to your registered email."
     }
+import time
+from fastapi import Depends, HTTPException, status, Request
+from sqlalchemy.orm import Session
+
+@app.post("/reset-password", status_code=status.HTTP_200_OK)
+@limiter.limit("5/15 minutes")
+def reset_password(
+    request: Request, 
+    data: ResetPasswordRequest, 
+    db: Session = Depends(get_db)
+):
+    email = data.email.strip()
+    otp_code = data.otp_code.strip()
+    
+    otp_record = db.query(models.OTP).filter(
+        models.OTP.email.ilike(email), 
+        models.OTP.otp_code == otp_code
+    ).first()
+    
+    invalid_or_expired_exception = HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST, 
+        detail="Invalid or expired verification code."
+    )
+    
+    if not otp_record or otp_record.expires_at < int(time.time()):
+        raise invalid_or_expired_exception
+
+    user = db.query(models.User).filter(models.User.email.ilike(email)).first()
+    
+    if not user:
+        raise invalid_or_expired_exception
+
+    user.password_hash = hash_password(data.new_password)
+    db.delete(otp_record)
+    db.commit()
+    
+    return {"message": "Password reset successful"}
