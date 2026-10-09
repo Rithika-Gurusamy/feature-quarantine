@@ -143,6 +143,104 @@ async def upload_resume(
             detail=f"Processing Pipeline Failed: {str(e)}"
         )
 
+# Request and response validation contracts for the chat
+class ChatRequest(BaseModel):
+    message: str
+    conversation_id: str
+    parent_id: Optional[str] = None
+
+class ChatResponse(BaseModel):
+    conversation_id: str
+    message_id: str
+    parent_id: str
+    response: str
+
+# Helper method to format keys consistently within the app context
+def get_conversation_list_key(conversation_id: str) -> str:
+    return f"conversation:{conversation_id}:messages"
+
+def get_message_key(message_id: str) -> str:
+    return f"message:{message_id}"
+
+# Endpoint to carry out the interactive chat using the Redis profile state
+@app.post("/chat", response_model=ChatResponse)
+async def chat_endpoint(payload: ChatRequest):
+    conv_id = payload.conversation_id
+    
+    # 1. Pull the structured resume profile from Redis
+    profile_key = f"profile:{conv_id}:resume"
+    raw_profile = r.get(profile_key)
+    
+    if not raw_profile:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"No resume profile found for conversation_id '{conv_id}'. Upload a resume first."
+        )
+    
+    resume_context = json.loads(raw_profile)
+    
+    # 2. Dynamically inject the resume data straight into the System Prompt rulebook
+    system_instruction = (
+        "You are an expert technical interviewer conducting a deep candidate assessment.\n"
+        f"Here is the candidate's structured resume data:\n{json.dumps(resume_context, indent=2)}\n\n"
+        "Your task: Conduct a highly engaging, sharp technical interview. Focus heavily on their projects "
+        "(e.g., asking how they handled OCR pipelines or breaking-change analyzers), skills, and certifications. "
+        "Ask exactly ONE specific question at a time. Wait for their answer, evaluate it briefly, and follow up. "
+        "Keep your questions professional, technical, and direct."
+    )
+    
+    # 3. Log the incoming user response into the Redis message tree store
+    user_msg_id = f"msg_{uuid.uuid4().hex[:8]}"
+    user_message_data = {
+        "message_id": user_msg_id,
+        "conversation_id": conv_id,
+        "parent_id": payload.parent_id or "",
+        "role": "user",
+        "content": payload.message,
+        "timestamp": datetime.now(UTC).isoformat()
+    }
+    r.set(get_message_key(user_msg_id), json.dumps(user_message_data))
+    r.rpush(get_conversation_list_key(conv_id), user_msg_id)
+    
+    # 4. Extract historical dialog logs out of Redis
+    message_ids = r.lrange(get_conversation_list_key(conv_id), 0, -1)
+    llm_payload = [SystemMessage(content=system_instruction)]
+    
+    for msg_id in message_ids:
+        raw_msg = r.get(get_message_key(msg_id))
+        if raw_msg:
+            msg_data = json.loads(raw_msg)
+            if msg_data["role"] == "user":
+                llm_payload.append(HumanMessage(content=msg_data["content"]))
+            elif msg_data["role"] == "assistant":
+                llm_payload.append(AIMessage(content=msg_data["content"]))
+                
+    # 5. Fire request payload to Gemini API over network interface
+    try:
+        ai_response = llm.invoke(llm_payload)
+        
+        # 6. Save the AI response back into the Redis storage layer
+        ai_msg_id = f"msg_{uuid.uuid4().hex[:8]}"
+        ai_message_data = {
+            "message_id": ai_msg_id,
+            "conversation_id": conv_id,
+            "parent_id": user_msg_id,
+            "role": "assistant",
+            "content": ai_response.content,
+            "timestamp": datetime.now(UTC).isoformat()
+        }
+        r.set(get_message_key(ai_msg_id), json.dumps(ai_message_data))
+        r.rpush(get_conversation_list_key(conv_id), ai_msg_id)
+        
+        return ChatResponse(
+            conversation_id=conv_id,
+            message_id=ai_msg_id,
+            parent_id=user_msg_id,
+            response=ai_response.content
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM Chat Error: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
