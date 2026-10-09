@@ -4,12 +4,14 @@ import uuid
 import json
 from typing import List, Optional
 from io import BytesIO
+from datetime import datetime, UTC
 
 from pydantic import BaseModel, Field
 import redis
 from pypdf import PdfReader
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 app = FastAPI(title="Gemini Resume Processing Core")
 
@@ -189,6 +191,7 @@ async def chat_endpoint(payload: ChatRequest):
         "3. DEEP PROJECT FOCUS: Anchor your line of questioning heavily onto their specific listed projects (like the Semantic Form Autofill or Smart DevTool). Ask how they handled architectural tradeoffs, security boundaries, breaking changes, or edge cases.\n"
         "4. ASK ONE QUESTION AT A TIME: Never bundle multiple questions together. Wait for their response before moving the dialogue forward.\n"
         "5. DURATION: Continue the interview organically, shifting topics smoothly across their backend/GenAI portfolio, until the user explicitly states they want to stop.\n\n"
+        "6.Ask them questions regarding the courses/certifications they have completed , ask them questions on that\nS"
         "Maintain a highly professional, encouraging, yet technically demanding conversational tone."
     )
 
