@@ -9,16 +9,26 @@ from pydantic import BaseModel, Field
 import redis
 from pypdf import PdfReader
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 app = FastAPI(title="Gemini Resume Interview Platform")
 
+# Enforce CORS configuration so your index.html can execute local browser requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Pull the Gemini API key from the system environment
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 if not GEMINI_API_KEY:
-    print("❌ ERROR: GEMINI_API_KEY environment variable not found!")
+    print("ERROR: GEMINI_API_KEY environment variable not found!")
     sys.exit(1)
 
 # Initialize the Gemini Language Model client
@@ -33,7 +43,7 @@ try:
     r = redis.Redis(host="localhost", port=6379, decode_responses=True)
     r.ping()
 except redis.exceptions.ConnectionError:
-    print("❌ ERROR: Could not connect to Redis!")
+    print("ERROR: Could not connect to Redis!")
     sys.exit(1)
 
 # Pydantic schemas to strictly enforce Gemini's data extraction output
