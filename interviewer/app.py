@@ -75,6 +75,7 @@ class ChatRequest(BaseModel):
     message: str
     conversation_id: str
     parent_id: Optional[str] = None
+    target_role: Optional[str] = None
 
 class ChatResponse(BaseModel):
     conversation_id: str
@@ -93,6 +94,7 @@ def get_message_key(message_id: str) -> str:
 @app.post("/resume/upload")
 async def upload_resume(
     conversation_id: Optional[str] = Form(None, description="Existing conv_id, or leave blank to generate a new one"),
+    target_role: Optional[str] = Form(None, description="Optional target job role specified by candidate"),
     file: UploadFile = File(..., description="Upload candidate resume PDF file")
 ):
     conv_id = conversation_id or f"conv_{uuid.uuid4().hex[:6]}"
@@ -126,13 +128,17 @@ async def upload_resume(
         structured_data = structured_llm.invoke(extraction_prompt)
         
         # Save the structured profile object directly into its own Redis key
+        profile_dict = structured_data.model_dump()
+        if target_role and target_role.strip():
+            profile_dict["target_role"] = target_role.strip()
+
         profile_key = f"profile:{conv_id}:resume"
-        r.set(profile_key, json.dumps(structured_data.model_dump()))
+        r.set(profile_key, json.dumps(profile_dict))
         
         return {
             "status": "Success",
             "conversation_id": conv_id,
-            "extracted_data": structured_data
+            "extracted_data": profile_dict
         }
         
     except Exception as e:
@@ -150,19 +156,38 @@ async def chat_endpoint(payload: ChatRequest):
     if not raw_profile:
         raise HTTPException(status_code=404, detail="No resume profile found. Please upload a resume first.")
     
-    resume_context = json.loads(raw_profile)
+    # If a target role was explicitly supplied in this request, persist it to the session profile
+    if payload.target_role and payload.target_role.strip():
+        resume_context["target_role"] = payload.target_role.strip()
+        r.set(profile_key, json.dumps(resume_context))
     
-    # Establish the senior manager persona and dynamically inject the resume profile context
+    target_role_clause = ""
+    if resume_context.get("target_role"):
+        target_role_clause = f"TARGET ROLE SPECIFIED BY CANDIDATE: {resume_context['target_role']}\n"
+
+    # Adaptive, domain-aware technical interviewer system instruction
     system_instruction = (
-        "You are a seasoned, empathetic, yet highly precise Senior Backend Engineering Manager conducting a technical interview.\n"
-        f"Here is the candidate's structured resume data:\n{json.dumps(resume_context, indent=2)}\n\n"
-        "YOUR CORE INSTRUCTIONS:\n"
-        "1. BE CONVERSATIONAL: Acknowledge and briefly evaluate the candidate's previous response naturally.\n"
-        "2. PROGRESSIVE DIFFICULTY: Test domain skills from baseline concepts up to intermediate implementation realities.\n"
-        "3. DEEP PROJECT FOCUS: Anchor your line of questioning heavily onto their specific listed projects and architectural tradeoffs.\n"
-        "4. ASK ONE QUESTION AT A TIME: Wait for their response before moving the dialogue forward.\n"
-        "5. DURATION: Continue the interview organically until the user explicitly states they want to stop.\n\n"
-        "Maintain a highly professional, encouraging, yet technically demanding conversational tone."
+        "You are an experienced, adaptive Technical Interviewer conducting a realistic, professional technical assessment.\n\n"
+        f"{target_role_clause}"
+        f"CANDIDATE STRUCTURED RESUME DATA:\n{json.dumps(resume_context, indent=2)}\n\n"
+        "YOUR CORE OPERATING INSTRUCTIONS:\n"
+        "1. ADAPTIVE TECHNICAL PERSONA:\n"
+        "   • If a target role is specified above, conduct the interview strictly aligned with that technical domain.\n"
+        "   • If no target role is explicitly provided, infer the candidate's primary technical focus (e.g., Frontend, Backend, Full Stack, Data Science, AI/ML, DevOps, Mobile, QA) directly from their listed skills, projects, and technologies.\n"
+        "   • If the resume covers multiple domains (e.g., Full Stack), explore both frontend and backend concepts relevant to their experience.\n"
+        "   • If the resume information is ambiguous or insufficient to determine an intended technical focus, ask the candidate at the beginning to clarify their target role rather than assuming or inventing one.\n"
+        "   • NEVER assume every candidate is a backend developer or default to backend systems. Adapt your expertise to match the candidate's domain.\n\n"
+        "2. GROUNDED IN REAL PROJECTS & SKILLS:\n"
+        "   • Anchor your technical questions directly to the actual projects, technical stacks, tools, and design decisions detailed in the resume.\n"
+        "   • Do NOT invent technologies, tools, metrics, libraries, or experiences absent from the candidate's background.\n"
+        "   • Calibrate question complexity to the candidate's demonstrated experience level; avoid assigning an unsupported seniority level.\n\n"
+        "3. CONVERSATIONAL CONTINUITY & INTERVIEW PROGRESSION:\n"
+        "   • Actively acknowledge and briefly evaluate the candidate's previous response naturally before asking your next question.\n"
+        "   • Ask insightful, relevant follow-up questions that probe technical trade-offs, edge cases, implementation decisions, and architectural rationales.\n"
+        "   • Do NOT repeat questions that have already been asked or answered in the conversation history.\n"
+        "   • Ask ONE question at a time. Wait for the candidate's response before moving forward.\n"
+        "   • Continue the interview organically until the candidate indicates they wish to conclude.\n\n"
+        "Maintain an encouraging, highly professional, realistic, and technically demanding interviewing style."
     )
     
     # Save the user's incoming statement to the tracking tree inside Redis

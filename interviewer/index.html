@@ -50,6 +50,11 @@
                 </div>
             </div>
 
+            <div class="form-group" style="margin-top: 14px;">
+                <label for="target-role">Target Role (Optional)</label>
+                <input type="text" id="target-role" class="input-text" placeholder="e.g. Frontend Engineer, Data Scientist, Full Stack (leave blank to infer from resume)">
+            </div>
+
             <button type="button" class="btn-primary" id="upload-btn" onclick="startInterviewSession()">
                 <span id="upload-btn-text">Upload Resume and Start Interview</span>
             </button>
@@ -59,6 +64,7 @@
         <div id="profile-preview">
             <div class="profile-title">
                 <span>Extracted Resume Profile</span>
+                <span id="profile-role-tag" class="skill-tag" style="display:none; background:#dbeafe; color:#1d4ed8;"></span>
             </div>
             <div id="profile-summary" class="profile-summary"></div>
             <div style="font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 4px;">Identified Key Skills:

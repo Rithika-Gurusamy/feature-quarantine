@@ -94,6 +94,10 @@ async function startInterviewSession() {
     // Build multipart/form-data payload
     const formData = new FormData();
     formData.append('file', file);
+    const targetRoleInput = document.getElementById('target-role');
+    if (targetRoleInput && targetRoleInput.value.trim()) {
+        formData.append('target_role', targetRoleInput.value.trim());
+    }
 
     try {
         const response = await fetch(`${apiBase}/resume/upload`, {
@@ -267,6 +271,16 @@ function renderProfilePreview(data) {
     const summaryEl = document.getElementById('profile-summary');
     const skillsEl = document.getElementById('profile-skills');
 
+    const roleTag = document.getElementById('profile-role-tag');
+    if (roleTag) {
+        if (data && data.target_role) {
+            roleTag.textContent = `Target: ${data.target_role}`;
+            roleTag.style.display = 'inline-block';
+        } else {
+            roleTag.style.display = 'none';
+        }
+    }
+
     summaryEl.textContent = data.summary || 'Summary generated from candidate resume.';
     skillsEl.innerHTML = '';
 
@@ -376,6 +390,8 @@ function resetInterviewSession() {
         document.getElementById('profile-preview').style.display = 'none';
         document.getElementById('setup-section').style.display = 'block';
         document.getElementById('resume-file').value = '';
+        const targetRoleInput = document.getElementById('target-role');
+        if (targetRoleInput) targetRoleInput.value = '';
         updateConnectionStatus('Standby', false);
         hideAlert();
     }
