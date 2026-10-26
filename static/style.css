@@ -313,33 +313,10 @@ input[type="file"]::file-selector-button:hover {
     gap: 14px;
 }
 
-.session-info {
+.session-actions {
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-end;
     align-items: center;
-    font-size: 12.5px;
-    color: #475569;
-    background-color: var(--primary-light);
-    border: 1px solid var(--primary-border);
-    padding: 10px 14px;
-    border-radius: var(--radius-md);
-}
-
-.session-meta {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-}
-
-.badge {
-    background: #ffffff;
-    border: 1px solid #bfdbfe;
-    padding: 3px 8px;
-    border-radius: 4px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11.5px;
-    color: #1e40af;
 }
 
 /* --- Chat Message Log --- */
@@ -358,8 +335,7 @@ input[type="file"]::file-selector-button:hover {
 
 .message-row {
     display: flex;
-    gap: 12px;
-    max-width: 88%;
+    max-width: 82%;
     animation: fadeIn 0.25s ease-out;
 }
 
@@ -376,35 +352,10 @@ input[type="file"]::file-selector-button:hover {
 
 .message-row.user {
     align-self: flex-end;
-    flex-direction: row-reverse;
 }
 
 .message-row.ai {
     align-self: flex-start;
-}
-
-/* --- Avatars --- */
-.avatar {
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 13px;
-    font-weight: 700;
-    flex-shrink: 0;
-}
-
-.avatar.ai-avatar {
-    background: linear-gradient(135deg, #1e3a8a, #2563eb);
-    color: #ffffff;
-    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
-}
-
-.avatar.user-avatar {
-    background: #e2e8f0;
-    color: #334155;
 }
 
 /* --- Message Bubbles --- */
@@ -412,6 +363,7 @@ input[type="file"]::file-selector-button:hover {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    width: 100%;
 }
 
 .message-sender {

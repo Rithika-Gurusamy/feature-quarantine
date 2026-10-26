@@ -120,8 +120,11 @@ async function startInterviewSession() {
         renderProfilePreview(data.extracted_data);
 
         // Update session indicators
-        document.getElementById('session-id-display').textContent = currentConversationId;
-        updateConnectionStatus('Redis Context Active', true);
+        const sessionDisplay = document.getElementById('session-id-display');
+        if (sessionDisplay) {
+            sessionDisplay.textContent = currentConversationId;
+        }
+        updateConnectionStatus('Active', true);
 
         // Reveal chat workspace, hide upload form
         document.getElementById('chat-section').style.display = 'flex';
@@ -289,16 +292,12 @@ function appendMessage(role, text) {
     const messageRow = document.createElement('div');
     messageRow.className = `message-row ${role}`;
 
-    const avatar = document.createElement('div');
-    avatar.className = `avatar ${role === 'user' ? 'user-avatar' : 'ai-avatar'}`;
-    avatar.textContent = role === 'user' ? 'ME' : 'AI';
-
     const contentWrapper = document.createElement('div');
     contentWrapper.className = 'message-content';
 
     const senderLabel = document.createElement('div');
     senderLabel.className = 'message-sender';
-    senderLabel.textContent = role === 'user' ? 'Candidate' : 'Engineering Manager';
+    senderLabel.textContent = role === 'user' ? 'Candidate' : 'Interviewer';
 
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
@@ -307,7 +306,6 @@ function appendMessage(role, text) {
     contentWrapper.appendChild(senderLabel);
     contentWrapper.appendChild(bubble);
 
-    messageRow.appendChild(avatar);
     messageRow.appendChild(contentWrapper);
 
     chatWindow.appendChild(messageRow);
@@ -325,16 +323,12 @@ function showTypingIndicator() {
     row.className = 'message-row ai';
     row.id = 'typing-indicator-row';
 
-    const avatar = document.createElement('div');
-    avatar.className = 'avatar ai-avatar';
-    avatar.textContent = 'AI';
-
     const contentWrapper = document.createElement('div');
     contentWrapper.className = 'message-content';
 
     const senderLabel = document.createElement('div');
     senderLabel.className = 'message-sender';
-    senderLabel.textContent = 'Engineering Manager is evaluating...';
+    senderLabel.textContent = 'Interviewer is evaluating...';
 
     const indicator = document.createElement('div');
     indicator.className = 'typing-indicator';
@@ -343,7 +337,6 @@ function showTypingIndicator() {
     contentWrapper.appendChild(senderLabel);
     contentWrapper.appendChild(indicator);
 
-    row.appendChild(avatar);
     row.appendChild(contentWrapper);
 
     chatWindow.appendChild(row);

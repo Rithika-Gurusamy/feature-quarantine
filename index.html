@@ -9,7 +9,9 @@
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
 
     <!-- Stylesheet -->
     <link rel="stylesheet" href="/static/style.css">
@@ -22,20 +24,21 @@
         <header class="header">
             <div class="header-content">
                 <h1>
-                    <span>🎙️ AI Mock Interviewer</span>
+                    <span>AI Mock Interviewer</span>
                 </h1>
-                <div class="subtitle">Stateful technical engineering assessment powered by Gemini &amp; Redis context engineering.</div>
+                <div class="subtitle">Assessment</div>
             </div>
             <div id="connection-pill" class="status-pill">
                 <span class="status-dot"></span>
-                <span id="connection-text">Standby</span>
+
             </div>
         </header>
 
         <!-- Alert Notification Box -->
         <div id="alert-box" class="alert error" style="display: none;">
             <span id="alert-message"></span>
-            <button type="button" class="btn-secondary" onclick="hideAlert()" style="padding: 2px 8px; font-size: 11px;">Dismiss</button>
+            <button type="button" class="btn-secondary" onclick="hideAlert()"
+                style="padding: 2px 8px; font-size: 11px;">Dismiss</button>
         </div>
 
         <!-- Setup Step Section -->
@@ -55,22 +58,17 @@
         <!-- Structured Profile Summary (Revealed after upload) -->
         <div id="profile-preview">
             <div class="profile-title">
-                <span>📄 Extracted Resume Profile</span>
-                <span id="profile-status-badge" class="badge" style="background:#e0f2fe; color:#0369a1; border-color:#bae6fd;">Redis Context Saved</span>
+                <span>Extracted Resume Profile</span>
             </div>
             <div id="profile-summary" class="profile-summary"></div>
-            <div style="font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 4px;">Identified Key Skills:</div>
+            <div style="font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 4px;">Identified Key Skills:
+            </div>
             <div id="profile-skills" class="skills-container"></div>
         </div>
 
         <!-- Active Chat Terminal -->
         <div id="chat-section">
-            <div class="session-info">
-                <div class="session-meta">
-                    <strong>Active Interview</strong>
-                    <span>Session: <span id="session-id-display" class="badge">--</span></span>
-                    <span>Persona: <strong>Senior Engineering Manager</strong></span>
-                </div>
+            <div class="session-actions">
                 <button type="button" class="btn-secondary" onclick="resetInterviewSession()">New Session</button>
             </div>
 
@@ -81,22 +79,20 @@
 
             <!-- Input Bar -->
             <div class="input-bar">
-                <textarea 
-                    id="user-input" 
-                    class="chat-input" 
-                    placeholder="Type your response to the interviewer... (Press Enter to send, Shift+Enter for newline)"
-                    rows="1"
-                    onkeydown="handleInputKeydown(event)"
-                    oninput="autoResizeTextarea(this)"></textarea>
+                <textarea id="user-input" class="chat-input"
+                    placeholder="Type your response to the Interviewer... (Press Enter to send, Shift+Enter for newline)"
+                    rows="1" onkeydown="handleInputKeydown(event)" oninput="autoResizeTextarea(this)"></textarea>
                 <button type="button" class="btn-send" id="send-btn" onclick="sendMessage()">
                     <span>Send</span>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
                         <line x1="22" y1="2" x2="11" y2="13"></line>
                         <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
                     </svg>
                 </button>
             </div>
-            <div class="hint">Press <strong>Enter</strong> to submit your response. <strong>Shift + Enter</strong> adds a line break.</div>
+            <div class="hint">Press <strong>Enter</strong> to submit your response. <strong>Shift + Enter</strong> adds
+                a line break.</div>
         </div>
     </div>
 
