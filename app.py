@@ -9,13 +9,26 @@ from pydantic import BaseModel, Field
 import redis
 from pypdf import PdfReader
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 app = FastAPI(title="Gemini Resume Interview Platform")
 
-# Enforce CORS configuration so your index.html can execute local browser requests
+# ── Serve the frontend ──────────────────────────────────────
+# Mount the static/ directory so the browser can load style.css and app.js
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+@app.get("/")
+async def serve_index():
+    """Serve index.html at the root URL."""
+    index_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
+    return FileResponse(index_path)
+
+# ── CORS ────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
