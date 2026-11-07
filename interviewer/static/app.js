@@ -1,63 +1,147 @@
 /* ============================================================
    app.js — Frontend Controller for AI Mock Interviewer
    ============================================================
-   Handles:
-     • Resume upload via POST /resume/upload  (multipart/form-data)
-     • Chat messages  via POST /chat           (JSON)
-     • DOM rendering (profile preview, chat bubbles, typing indicator)
-     • Drag-and-drop PDF upload
+   Connects:
+     • Backend Health Check : GET /api/health
+     • Resume Upload & Parse: POST /resume/upload (multipart/form-data)
+     • Stateful Chat & LLM  : POST /chat          (application/json)
+     • Session History      : GET /api/session/{id}
    ============================================================ */
 
-// --------------- Session State ---------------
+// ── Session State ─────────────────────────────────────────────
 let currentConversationId = null;
 let lastMessageId = null;
 let isProcessing = false;
 
-// --------------- API Helper ---------------
+// ── API Base URL Resolution ───────────────────────────────────
 /**
  * Resolves the backend base URL.
- * When index.html is served by FastAPI (http://localhost:8000),
- * window.location.origin already points at the backend — no manual config needed.
+ * Defaults to port 8000 if opened through Live Server (5500), file protocol, or dev ports.
  */
 function getApiBaseUrl() {
     if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
-        return window.location.origin;
+        // If served directly by FastAPI on port 8000
+        if (window.location.port === '8000') {
+            return window.location.origin;
+        }
     }
+    // Default backend address
     return 'http://localhost:8000';
 }
 
-// --------------- Alert Banner ---------------
+// ── Backend Health Check on Startup ───────────────────────────
+async function checkBackendHealth() {
+    const apiBase = getApiBaseUrl();
+    try {
+        const response = await fetch(`${apiBase}/api/health`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            console.log(`[HealthCheck] Connected to backend at ${apiBase}:`, data);
+            if (data.redis_connected) {
+                updateConnectionStatus('Ready', true);
+            } else {
+                updateConnectionStatus('Redis Offline', false);
+                showAlert('Redis is unreachable! Please start Redis on localhost:6379.', 'error');
+            }
+        } else {
+            updateConnectionStatus('Degraded', false);
+        }
+    } catch (err) {
+        console.warn(`[HealthCheck] Could not reach backend at ${apiBase}:`, err.message);
+        updateConnectionStatus('Server Offline', false);
+        showAlert(
+            `Cannot connect to FastAPI backend at ${apiBase}. ` +
+            `Ensure \`uvicorn app:app --reload\` is running in terminal.`,
+            'error'
+        );
+    }
+}
+
+// ── Alert Banner Helpers ──────────────────────────────────────
 function showAlert(message, type = 'error') {
     const alertBox = document.getElementById('alert-box');
     const alertMsg = document.getElementById('alert-message');
+    if (!alertBox || !alertMsg) return;
+
     alertBox.className = `alert ${type}`;
     alertMsg.textContent = message;
     alertBox.style.display = 'flex';
 }
 
 function hideAlert() {
-    document.getElementById('alert-box').style.display = 'none';
+    const alertBox = document.getElementById('alert-box');
+    if (alertBox) {
+        alertBox.style.display = 'none';
+    }
 }
 
-// --------------- File Selection ---------------
+// ── Connection Status Pill ────────────────────────────────────
+function updateConnectionStatus(text, isConnected) {
+    const pill = document.getElementById('connection-pill');
+    const label = document.getElementById('connection-text');
+    if (label) {
+        label.textContent = text;
+    }
+    if (pill) {
+        if (isConnected) {
+            pill.classList.add('connected');
+        } else {
+            pill.classList.remove('connected');
+        }
+    }
+}
+
+// ── File Selection & Drag-and-Drop ────────────────────────────
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
 function onFileSelected(input) {
     hideAlert();
+    const fileInfo = document.getElementById('file-info');
+    const fileInfoText = document.getElementById('file-info-text');
+
     if (input.files && input.files[0]) {
         const file = input.files[0];
         if (!file.name.toLowerCase().endsWith('.pdf')) {
             showAlert('Only PDF files are supported. Please select a valid .pdf file.');
             input.value = '';
+            if (fileInfo) fileInfo.style.display = 'none';
+            return;
         }
+
+        if (fileInfo && fileInfoText) {
+            fileInfoText.textContent = `${file.name} (${formatBytes(file.size)})`;
+            fileInfo.style.display = 'inline-flex';
+        }
+    } else {
+        if (fileInfo) fileInfo.style.display = 'none';
     }
 }
 
-// --------------- Textarea Auto-resize ---------------
-function autoResizeTextarea(textarea) {
-    textarea.style.height = 'auto';
-    textarea.style.height = Math.min(textarea.scrollHeight, 160) + 'px';
+function clearSelectedFile() {
+    const fileInput = document.getElementById('resume-file');
+    const fileInfo = document.getElementById('file-info');
+    if (fileInput) fileInput.value = '';
+    if (fileInfo) fileInfo.style.display = 'none';
+    hideAlert();
 }
 
-// --------------- Keyboard Shortcut ---------------
+// ── Textarea Auto-resize ──────────────────────────────────────
+function autoResizeTextarea(textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 180) + 'px';
+}
+
+// ── Keyboard Shortcut (Enter to send, Shift+Enter for newline) ─
 function handleInputKeydown(event) {
     if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
@@ -76,17 +160,17 @@ async function startInterviewSession() {
     const apiBase = getApiBaseUrl();
 
     if (!fileInput.files || fileInput.files.length === 0) {
-        showAlert('Please choose a PDF resume file to upload.');
+        showAlert('Please choose or drop a PDF resume file to start the assessment.');
         return;
     }
 
     const file = fileInput.files[0];
     if (!file.name.toLowerCase().endsWith('.pdf')) {
-        showAlert('Please select a PDF file (.pdf extension).');
+        showAlert('Only PDF files (.pdf) are supported. Please choose a valid PDF.');
         return;
     }
 
-    // UI state: uploading
+    // UI state: uploading & analyzing
     uploadBtn.disabled = true;
     uploadBtnText.innerHTML = '<span class="spinner"></span> Extracting & Analyzing Resume with Gemini...';
     updateConnectionStatus('Analyzing Resume...', false);
@@ -94,6 +178,8 @@ async function startInterviewSession() {
     // Build multipart/form-data payload
     const formData = new FormData();
     formData.append('file', file);
+
+    console.log(`[Upload] Sending ${file.name} (${formatBytes(file.size)}) to ${apiBase}/resume/upload...`);
 
     try {
         const response = await fetch(`${apiBase}/resume/upload`, {
@@ -113,44 +199,49 @@ async function startInterviewSession() {
         }
 
         const data = await response.json();
+        console.log('[Upload] Success. Extracted data:', data);
+
         currentConversationId = data.conversation_id;
         lastMessageId = null;
 
         // Render structured resume profile
         renderProfilePreview(data.extracted_data);
 
-        // Update session indicators
+        // Update session ID indicator in header
         const sessionDisplay = document.getElementById('session-id-display');
         if (sessionDisplay) {
-            sessionDisplay.textContent = currentConversationId;
+            sessionDisplay.textContent = `ID: ${currentConversationId}`;
+            sessionDisplay.style.display = 'inline-block';
         }
-        updateConnectionStatus('Active', true);
+        updateConnectionStatus('Active Interview', true);
 
-        // Reveal chat workspace, hide upload form
-        document.getElementById('chat-section').style.display = 'flex';
+        // Hide setup section, reveal active chat workspace
         document.getElementById('setup-section').style.display = 'none';
+        document.getElementById('chat-section').style.display = 'flex';
 
-        // Automatically kick off the interview
+        // Automatically kick off the first interviewer turn
         await triggerInterviewKickoff();
 
     } catch (err) {
-        console.error('Upload failed:', err);
-        showAlert(`Connection/Upload Error: ${err.message}. Make sure app.py is running on ${apiBase} and Docker Redis is online.`);
-        updateConnectionStatus('Connection Error', false);
+        console.error('[Upload] Error:', err);
+        showAlert(`Upload Failed: ${err.message}`);
+        updateConnectionStatus('Upload Error', false);
     } finally {
         uploadBtn.disabled = false;
-        uploadBtnText.textContent = 'Upload Resume and Start Interview';
+        uploadBtnText.textContent = 'Upload Resume & Start Interview';
     }
 }
 
 // ============================================================
-// Auto-kickoff — Sends the first message so the AI starts asking
+// Auto-Kickoff — Sends initial prompt to start the interview
 // ============================================================
 async function triggerInterviewKickoff() {
     showTypingIndicator();
     const apiBase = getApiBaseUrl();
 
     const initialPrompt = "Hello. I have submitted my resume and I'm ready to begin the technical interview.";
+
+    console.log(`[Chat] Sending kickoff prompt to ${apiBase}/chat...`);
 
     try {
         const response = await fetch(`${apiBase}/chat`, {
@@ -166,21 +257,32 @@ async function triggerInterviewKickoff() {
         removeTypingIndicator();
 
         if (!response.ok) {
-            const err = await response.json().catch(() => ({ detail: 'Failed to start interview.' }));
-            throw new Error(err.detail || 'Initial chat request failed');
+            let errDetail = 'Initial interview kickoff failed.';
+            try {
+                const errData = await response.json();
+                errDetail = errData.detail || errDetail;
+            } catch (e) {
+                errDetail = `HTTP ${response.status}: ${response.statusText}`;
+            }
+            throw new Error(errDetail);
         }
 
         const data = await response.json();
+        console.log('[Chat] Kickoff response received:', data);
+
         lastMessageId = data.message_id;
 
-        // Display interviewer's opening question
+        // Display interviewer opening question
         appendMessage('ai', data.response);
-        document.getElementById('user-input').focus();
+
+        // Focus user input for seamless chatting
+        const userInput = document.getElementById('user-input');
+        if (userInput) userInput.focus();
 
     } catch (err) {
         removeTypingIndicator();
-        console.error('Kickoff chat failed:', err);
-        showAlert(`Failed to initiate conversation with Interviewer: ${err.message}`);
+        console.error('[Chat] Kickoff failed:', err);
+        showAlert(`Failed to initiate dialogue with Interviewer: ${err.message}`);
     }
 }
 
@@ -196,6 +298,7 @@ async function sendMessage() {
     const apiBase = getApiBaseUrl();
 
     if (!messageText) return;
+
     if (!currentConversationId) {
         showAlert('No active interview session found. Please upload a resume first.');
         return;
@@ -203,7 +306,7 @@ async function sendMessage() {
 
     hideAlert();
 
-    // Display user message in chat immediately (optimistic render)
+    // Display user message in chat immediately (optimistic UI)
     appendMessage('user', messageText);
     inputEl.value = '';
     autoResizeTextarea(inputEl);
@@ -220,6 +323,8 @@ async function sendMessage() {
             parent_id: lastMessageId
         };
 
+        console.log(`[Chat] Sending candidate response (${messageText.length} chars)...`);
+
         const response = await fetch(`${apiBase}/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -229,7 +334,7 @@ async function sendMessage() {
         removeTypingIndicator();
 
         if (!response.ok) {
-            let errDetail = 'Chat request failed';
+            let errDetail = 'Chat response failed';
             try {
                 const errData = await response.json();
                 errDetail = errData.detail || errDetail;
@@ -240,14 +345,16 @@ async function sendMessage() {
         }
 
         const data = await response.json();
+        console.log('[Chat] Received AI response:', data);
+
         lastMessageId = data.message_id;
 
-        // Render interviewer's response
+        // Render interviewer response
         appendMessage('ai', data.response);
 
     } catch (err) {
         removeTypingIndicator();
-        console.error('Chat error:', err);
+        console.error('[Chat] Send message error:', err);
         showAlert(`Interviewer response error: ${err.message}`);
     } finally {
         isProcessing = false;
@@ -266,10 +373,11 @@ function renderProfilePreview(data) {
     const previewCard = document.getElementById('profile-preview');
     const summaryEl = document.getElementById('profile-summary');
     const skillsEl = document.getElementById('profile-skills');
-
     const roleTag = document.getElementById('profile-role-tag');
+
+    // Inferred Role Tag
     if (roleTag) {
-        if (data && data.inferred_role) {
+        if (data.inferred_role) {
             roleTag.textContent = `🎯 ${data.inferred_role}`;
             roleTag.style.display = 'inline-block';
         } else {
@@ -277,27 +385,105 @@ function renderProfilePreview(data) {
         }
     }
 
-    summaryEl.textContent = data.summary || 'Summary generated from candidate resume.';
-    skillsEl.innerHTML = '';
-
-    const skills = data.skills || [];
-    if (skills.length > 0) {
-        skills.forEach(skill => {
-            const tag = document.createElement('span');
-            tag.className = 'skill-tag';
-            tag.textContent = skill;
-            skillsEl.appendChild(tag);
-        });
-    } else {
-        skillsEl.innerHTML = '<span style="font-size: 12px; color: #94a3b8;">No skills parsed.</span>';
+    // Professional Summary
+    if (summaryEl) {
+        summaryEl.textContent = data.summary || 'Summary parsed from candidate resume.';
     }
 
-    previewCard.style.display = 'block';
+    // Key Skills Tags
+    if (skillsEl) {
+        skillsEl.innerHTML = '';
+        const skills = data.skills || [];
+        if (skills.length > 0) {
+            skills.forEach(skill => {
+                const tag = document.createElement('span');
+                tag.className = 'skill-tag';
+                tag.textContent = skill;
+                skillsEl.appendChild(tag);
+            });
+        } else {
+            skillsEl.innerHTML = '<span style="font-size: 12px; color: #94a3b8;">No skills parsed.</span>';
+        }
+    }
+
+    // Key Projects
+    const projectsSec = document.getElementById('profile-projects-section');
+    const projectsEl = document.getElementById('profile-projects');
+    if (projectsSec && projectsEl) {
+        const projects = data.projects || [];
+        if (projects.length > 0) {
+            projectsEl.innerHTML = '';
+            projects.forEach(p => {
+                const card = document.createElement('div');
+                card.className = 'project-card';
+
+                const title = document.createElement('div');
+                title.className = 'project-title';
+                title.textContent = p.title || 'Project';
+                card.appendChild(title);
+
+                if (p.highlights && p.highlights.length > 0) {
+                    const ul = document.createElement('ul');
+                    ul.className = 'project-highlights';
+                    p.highlights.forEach(h => {
+                        const li = document.createElement('li');
+                        li.textContent = h;
+                        ul.appendChild(li);
+                    });
+                    card.appendChild(ul);
+                }
+
+                projectsEl.appendChild(card);
+            });
+            projectsSec.style.display = 'block';
+        } else {
+            projectsSec.style.display = 'none';
+        }
+    }
+
+    // Certifications
+    const certsSec = document.getElementById('profile-certifications-section');
+    const certsEl = document.getElementById('profile-certifications');
+    if (certsSec && certsEl) {
+        const certs = data.certifications || [];
+        if (certs.length > 0) {
+            certsEl.innerHTML = '';
+            certs.forEach(c => {
+                const tag = document.createElement('span');
+                tag.className = 'cert-tag';
+                tag.textContent = `📜 ${c}`;
+                certsEl.appendChild(tag);
+            });
+            certsSec.style.display = 'block';
+        } else {
+            certsSec.style.display = 'none';
+        }
+    }
+
+    if (previewCard) {
+        previewCard.style.display = 'block';
+    }
+}
+
+/** Toggle expand/collapse of the profile summary card */
+function toggleProfileDetails() {
+    const details = document.getElementById('profile-details-body');
+    const btn = document.getElementById('toggle-profile-btn');
+    if (!details || !btn) return;
+
+    if (details.style.display === 'none') {
+        details.style.display = 'block';
+        btn.textContent = 'Hide Details ▲';
+    } else {
+        details.style.display = 'none';
+        btn.textContent = 'Show Details ▼';
+    }
 }
 
 /** Append a message bubble to the chat window */
 function appendMessage(role, text) {
     const chatWindow = document.getElementById('chat-window');
+    if (!chatWindow) return;
 
     const messageRow = document.createElement('div');
     messageRow.className = `message-row ${role}`;
@@ -305,20 +491,33 @@ function appendMessage(role, text) {
     const contentWrapper = document.createElement('div');
     contentWrapper.className = 'message-content';
 
-    const senderLabel = document.createElement('div');
+    // Header with sender name and current time
+    const headerRow = document.createElement('div');
+    headerRow.className = 'message-header';
+
+    const senderLabel = document.createElement('span');
     senderLabel.className = 'message-sender';
     senderLabel.textContent = role === 'user' ? 'Candidate' : 'Interviewer';
+
+    const timeLabel = document.createElement('span');
+    timeLabel.className = 'message-time';
+    const now = new Date();
+    timeLabel.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    headerRow.appendChild(senderLabel);
+    headerRow.appendChild(timeLabel);
 
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
     bubble.innerHTML = formatMarkdown(text);
 
-    contentWrapper.appendChild(senderLabel);
+    contentWrapper.appendChild(headerRow);
     contentWrapper.appendChild(bubble);
 
     messageRow.appendChild(contentWrapper);
-
     chatWindow.appendChild(messageRow);
+
+    // Smoothly scroll down
     chatWindow.scrollTop = chatWindow.scrollHeight;
 }
 
@@ -328,6 +527,7 @@ function appendMessage(role, text) {
 function showTypingIndicator() {
     removeTypingIndicator();
     const chatWindow = document.getElementById('chat-window');
+    if (!chatWindow) return;
 
     const row = document.createElement('div');
     row.className = 'message-row ai';
@@ -346,7 +546,6 @@ function showTypingIndicator() {
 
     contentWrapper.appendChild(senderLabel);
     contentWrapper.appendChild(indicator);
-
     row.appendChild(contentWrapper);
 
     chatWindow.appendChild(row);
@@ -361,51 +560,46 @@ function removeTypingIndicator() {
 }
 
 // ============================================================
-// Connection Status Pill
-// ============================================================
-function updateConnectionStatus(text, isConnected) {
-    const pill = document.getElementById('connection-pill');
-    const label = document.getElementById('connection-text');
-    label.textContent = text;
-    if (isConnected) {
-        pill.classList.add('connected');
-    } else {
-        pill.classList.remove('connected');
-    }
-}
-
-// ============================================================
 // Reset / New Session
 // ============================================================
 function resetInterviewSession() {
-    if (confirm('Start a new interview session? This will reset the current dialogue view.')) {
+    if (confirm('Start a new interview session? This will reset the dialogue and let you upload a new resume.')) {
         currentConversationId = null;
         lastMessageId = null;
-        document.getElementById('chat-window').innerHTML = '';
+
+        const chatWindow = document.getElementById('chat-window');
+        if (chatWindow) chatWindow.innerHTML = '';
+
         document.getElementById('chat-section').style.display = 'none';
         document.getElementById('profile-preview').style.display = 'none';
         document.getElementById('setup-section').style.display = 'block';
-        document.getElementById('resume-file').value = '';
-        const targetRoleInput = document.getElementById('target-role');
-        if (targetRoleInput) targetRoleInput.value = '';
-        updateConnectionStatus('Standby', false);
+
+        clearSelectedFile();
+
+        const sessionDisplay = document.getElementById('session-id-display');
+        if (sessionDisplay) {
+            sessionDisplay.textContent = '';
+            sessionDisplay.style.display = 'none';
+        }
+
+        updateConnectionStatus('Ready', true);
         hideAlert();
     }
 }
 
 // ============================================================
-// Markdown Formatter (lightweight)
+// Markdown Formatter (lightweight & secure)
 // ============================================================
 function formatMarkdown(text) {
     if (!text) return '';
 
-    // Escape HTML entities to prevent injection
+    // Escape HTML to prevent injection
     let escaped = text
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
 
-    // Code blocks: ```code```
+    // Fenced Code blocks: ```code```
     escaped = escaped.replace(/```([\s\S]*?)```/g, function (match, code) {
         return '<pre><code>' + code.trim() + '</code></pre>';
     });
@@ -419,7 +613,7 @@ function formatMarkdown(text) {
     // Italic: *text*
     escaped = escaped.replace(/\*([^*]+)\*/g, '<em>$1</em>');
 
-    // Split into paragraphs / lines
+    // Process line-by-line for paragraphs and lists
     const lines = escaped.split('\n');
     let formatted = '';
     let inList = false;
@@ -456,32 +650,46 @@ function formatMarkdown(text) {
 }
 
 // ============================================================
-// Drag & Drop Support for PDF Upload
+// Event Listeners: Drag & Drop + DOM Initialization
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
+    // 1. Check backend connection
+    checkBackendHealth();
+
+    // 2. Drag & Drop on setup-section and drop-zone
+    const dropZone = document.getElementById('drop-zone');
     const setupSection = document.getElementById('setup-section');
+    const fileInput = document.getElementById('resume-file');
 
-    ['dragenter', 'dragover'].forEach(eventName => {
-        setupSection.addEventListener(eventName, (e) => {
-            e.preventDefault();
-            setupSection.classList.add('dragover');
-        }, false);
-    });
+    if (dropZone && fileInput) {
+        // Clicking dropZone triggers hidden file input
+        dropZone.addEventListener('click', () => {
+            fileInput.click();
+        });
 
-    ['dragleave', 'drop'].forEach(eventName => {
-        setupSection.addEventListener(eventName, (e) => {
-            e.preventDefault();
-            setupSection.classList.remove('dragover');
-        }, false);
-    });
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.add('dragover');
+            }, false);
+        });
 
-    setupSection.addEventListener('drop', (e) => {
-        const dt = e.dataTransfer;
-        const files = dt.files;
-        if (files && files.length > 0) {
-            const fileInput = document.getElementById('resume-file');
-            fileInput.files = files;
-            onFileSelected(fileInput);
-        }
-    });
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.remove('dragover');
+            }, false);
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files && files.length > 0) {
+                fileInput.files = files;
+                onFileSelected(fileInput);
+            }
+        });
+    }
 });

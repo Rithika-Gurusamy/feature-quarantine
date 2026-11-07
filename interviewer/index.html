@@ -24,53 +24,101 @@
         <header class="header">
             <div class="header-content">
                 <h1>
+                    <span class="header-icon">🎙️</span>
                     <span>AI Mock Interviewer</span>
                 </h1>
-                <div class="subtitle">Assessment</div>
+                <div class="subtitle">Adaptive Technical Assessment powered by Google Gemini &amp; Redis</div>
             </div>
-            <div id="connection-pill" class="status-pill">
-                <span class="status-dot"></span>
-
+            <div class="header-meta">
+                <span id="session-id-display" class="session-badge" style="display: none;" title="Current Conversation ID"></span>
+                <div id="connection-pill" class="status-pill" title="Backend Connection Status">
+                    <span class="status-dot"></span>
+                    <span id="connection-text">Connecting...</span>
+                </div>
             </div>
         </header>
 
         <!-- Alert Notification Box -->
         <div id="alert-box" class="alert error" style="display: none;">
-            <span id="alert-message"></span>
-            <button type="button" class="btn-secondary" onclick="hideAlert()"
-                style="padding: 2px 8px; font-size: 11px;">Dismiss</button>
+            <div class="alert-content">
+                <span class="alert-icon">⚠️</span>
+                <span id="alert-message"></span>
+            </div>
+            <button type="button" class="btn-secondary alert-dismiss-btn" onclick="hideAlert()">Dismiss</button>
         </div>
 
         <!-- Setup Step Section -->
         <div id="setup-section">
-            <div class="form-group">
-                <label for="resume-file">Candidate Resume Artifact (PDF)</label>
-                <div class="file-upload-wrapper">
-                    <input type="file" id="resume-file" accept=".pdf" onchange="onFileSelected(this)">
+            <div class="setup-header">
+                <h2>Step 1: Upload Candidate Resume</h2>
+                <p>Upload a standard PDF resume. The AI will parse your technical background, infer your target domain, and calibrate technical interview questions accordingly.</p>
+            </div>
+
+            <div class="drop-zone" id="drop-zone">
+                <div class="drop-zone-icon">📄</div>
+                <div class="drop-zone-prompt">
+                    <strong>Drag and drop your PDF resume here</strong>
+                    <span>or click to browse from your computer</span>
                 </div>
+                <input type="file" id="resume-file" accept=".pdf" onchange="onFileSelected(this)">
+            </div>
+
+            <!-- File info pill (revealed after selection) -->
+            <div id="file-info" class="file-info-badge" style="display: none;">
+                <span class="file-info-icon">📎</span>
+                <span id="file-info-text" class="file-info-name">resume.pdf</span>
+                <button type="button" class="file-info-remove" onclick="clearSelectedFile()" title="Remove file">&times;</button>
             </div>
 
             <button type="button" class="btn-primary" id="upload-btn" onclick="startInterviewSession()">
-                <span id="upload-btn-text">Upload Resume and Start Interview</span>
+                <span id="upload-btn-text">Upload Resume &amp; Start Interview</span>
             </button>
         </div>
 
         <!-- Structured Profile Summary (Revealed after upload) -->
         <div id="profile-preview">
-            <div class="profile-title">
-                <span>Extracted Resume Profile</span>
-                <span id="profile-role-tag" class="skill-tag" style="display:none; background:#dbeafe; color:#1d4ed8;">🎯 Inferred Role</span>
+            <div class="profile-header-row">
+                <div class="profile-title">
+                    <span>Extracted Resume Profile</span>
+                    <span id="profile-role-tag" class="role-badge" style="display: none;">🎯 Inferred Role</span>
+                </div>
+                <button type="button" class="btn-toggle-profile" id="toggle-profile-btn" onclick="toggleProfileDetails()">
+                    Hide Details ▲
+                </button>
             </div>
-            <div id="profile-summary" class="profile-summary"></div>
-            <div style="font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 4px;">Identified Key Skills:
+
+            <div id="profile-details-body">
+                <div id="profile-summary" class="profile-summary"></div>
+
+                <div class="profile-section-title">Identified Key Skills:</div>
+                <div id="profile-skills" class="skills-container"></div>
+
+                <!-- Projects (Rendered dynamically if available) -->
+                <div id="profile-projects-section" style="display: none; margin-top: 14px;">
+                    <div class="profile-section-title">Demonstrated Projects:</div>
+                    <div id="profile-projects" class="projects-container"></div>
+                </div>
+
+                <!-- Certifications (Rendered dynamically if available) -->
+                <div id="profile-certifications-section" style="display: none; margin-top: 14px;">
+                    <div class="profile-section-title">Certifications &amp; Credentials:</div>
+                    <div id="profile-certifications" class="certifications-container"></div>
+                </div>
             </div>
-            <div id="profile-skills" class="skills-container"></div>
         </div>
 
         <!-- Active Chat Terminal -->
         <div id="chat-section">
-            <div class="session-actions">
-                <button type="button" class="btn-secondary" onclick="resetInterviewSession()">New Session</button>
+            <div class="chat-header-bar">
+                <div class="chat-status-indicator">
+                    <span class="live-dot"></span>
+                    <span>Technical Interview in Progress</span>
+                </div>
+                <div class="session-actions">
+                    <button type="button" class="btn-secondary" onclick="resetInterviewSession()" title="Reset and upload another resume">
+                        🔄 New Session
+                    </button>
+                </div>
             </div>
 
             <!-- Messages Window -->
@@ -83,7 +131,7 @@
                 <textarea id="user-input" class="chat-input"
                     placeholder="Type your response to the Interviewer... (Press Enter to send, Shift+Enter for newline)"
                     rows="1" onkeydown="handleInputKeydown(event)" oninput="autoResizeTextarea(this)"></textarea>
-                <button type="button" class="btn-send" id="send-btn" onclick="sendMessage()">
+                <button type="button" class="btn-send" id="send-btn" onclick="sendMessage()" title="Send response (Enter)">
                     <span>Send</span>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
@@ -92,8 +140,7 @@
                     </svg>
                 </button>
             </div>
-            <div class="hint">Press <strong>Enter</strong> to submit your response. <strong>Shift + Enter</strong> adds
-                a line break.</div>
+            <div class="hint">Press <strong>Enter</strong> to submit your response. <strong>Shift + Enter</strong> adds a line break.</div>
         </div>
     </div>
 
