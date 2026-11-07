@@ -94,10 +94,6 @@ async function startInterviewSession() {
     // Build multipart/form-data payload
     const formData = new FormData();
     formData.append('file', file);
-    const targetRoleInput = document.getElementById('target-role');
-    if (targetRoleInput && targetRoleInput.value.trim()) {
-        formData.append('target_role', targetRoleInput.value.trim());
-    }
 
     try {
         const response = await fetch(`${apiBase}/resume/upload`, {
@@ -273,8 +269,8 @@ function renderProfilePreview(data) {
 
     const roleTag = document.getElementById('profile-role-tag');
     if (roleTag) {
-        if (data && data.target_role) {
-            roleTag.textContent = `Target: ${data.target_role}`;
+        if (data && data.inferred_role) {
+            roleTag.textContent = `🎯 ${data.inferred_role}`;
             roleTag.style.display = 'inline-block';
         } else {
             roleTag.style.display = 'none';
