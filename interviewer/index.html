@@ -4,148 +4,110 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Mock Interviewer | Stateful Technical Assessment</title>
+    <title>AI Technical Interviewer</title>
 
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-    <!-- Stylesheet -->
-    <link rel="stylesheet" href="/static/style.css">
+    <!-- Relative stylesheet path so it works when served by FastAPI or opened locally -->
+    <link rel="stylesheet" href="static/style.css">
 </head>
 
 <body>
 
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <div class="header-content">
-                <h1>
-                    <span class="header-icon">🎙️</span>
-                    <span>AI Mock Interviewer</span>
-                </h1>
-                <div class="subtitle">Adaptive Technical Assessment powered by Google Gemini &amp; Redis</div>
+    <div class="app-layout">
+
+        <!-- Top Navigation Bar -->
+        <header class="app-header">
+            <div class="header-brand">
+                <span class="brand-icon">🎙️</span>
+                <span class="brand-title">AI Mock Interviewer</span>
             </div>
-            <div class="header-meta">
-                <span id="session-id-display" class="session-badge" style="display: none;" title="Current Conversation ID"></span>
-                <div id="connection-pill" class="status-pill" title="Backend Connection Status">
+            <div class="header-status">
+                <span id="role-badge" class="role-pill" style="display: none;"></span>
+                <span id="connection-pill" class="status-pill">
                     <span class="status-dot"></span>
                     <span id="connection-text">Connecting...</span>
-                </div>
+                </span>
+                <button type="button" id="restart-btn" class="btn-ghost" onclick="restartSession()" style="display: none;" title="Restart interview with another resume">
+                    🔄 Restart
+                </button>
             </div>
         </header>
 
-        <!-- Alert Notification Box -->
-        <div id="alert-box" class="alert error" style="display: none;">
-            <div class="alert-content">
-                <span class="alert-icon">⚠️</span>
-                <span id="alert-message"></span>
-            </div>
-            <button type="button" class="btn-secondary alert-dismiss-btn" onclick="hideAlert()">Dismiss</button>
+        <!-- Notification Banner -->
+        <div id="alert-box" class="alert-banner" style="display: none;">
+            <span id="alert-message"></span>
+            <button type="button" class="alert-close" onclick="hideAlert()">&times;</button>
         </div>
 
-        <!-- Setup Step Section -->
-        <div id="setup-section">
-            <div class="setup-header">
-                <h2>Step 1: Upload Candidate Resume</h2>
-                <p>Upload a standard PDF resume. The AI will parse your technical background, infer your target domain, and calibrate technical interview questions accordingly.</p>
-            </div>
-
-            <div class="drop-zone" id="drop-zone">
-                <div class="drop-zone-icon">📄</div>
-                <div class="drop-zone-prompt">
-                    <strong>Drag and drop your PDF resume here</strong>
-                    <span>or click to browse from your computer</span>
+        <!-- VIEW 1: Resume Upload View (Initial Screen) -->
+        <main id="upload-view" class="view-panel">
+            <div class="upload-card">
+                <div class="card-hero">
+                    <div class="hero-icon">📄</div>
+                    <h2>Upload Your Resume</h2>
+                    <p>Upload a standard PDF resume. The AI will inspect your skills, projects, and target role to conduct a realistic technical interview.</p>
                 </div>
-                <input type="file" id="resume-file" accept=".pdf" onchange="onFileSelected(this)">
-            </div>
 
-            <!-- File info pill (revealed after selection) -->
-            <div id="file-info" class="file-info-badge" style="display: none;">
-                <span class="file-info-icon">📎</span>
-                <span id="file-info-text" class="file-info-name">resume.pdf</span>
-                <button type="button" class="file-info-remove" onclick="clearSelectedFile()" title="Remove file">&times;</button>
-            </div>
-
-            <button type="button" class="btn-primary" id="upload-btn" onclick="startInterviewSession()">
-                <span id="upload-btn-text">Upload Resume &amp; Start Interview</span>
-            </button>
-        </div>
-
-        <!-- Structured Profile Summary (Revealed after upload) -->
-        <div id="profile-preview">
-            <div class="profile-header-row">
-                <div class="profile-title">
-                    <span>Extracted Resume Profile</span>
-                    <span id="profile-role-tag" class="role-badge" style="display: none;">🎯 Inferred Role</span>
+                <!-- Dropzone Area -->
+                <div class="dropzone" id="dropzone" onclick="document.getElementById('resume-file').click()">
+                    <input type="file" id="resume-file" accept=".pdf" onchange="handleFileSelect(this)" style="display: none;">
+                    <div class="dropzone-content">
+                        <svg class="dropzone-svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <div class="dropzone-text">
+                            <strong>Choose a PDF file</strong> or drag & drop it here
+                        </div>
+                        <span class="dropzone-hint">Text-selectable PDF format supported</span>
+                    </div>
                 </div>
-                <button type="button" class="btn-toggle-profile" id="toggle-profile-btn" onclick="toggleProfileDetails()">
-                    Hide Details ▲
+
+                <!-- Selected file pill -->
+                <div id="file-preview" class="file-preview-pill" style="display: none;">
+                    <span class="file-icon">📎</span>
+                    <span id="file-name" class="file-name-text">resume.pdf</span>
+                    <button type="button" class="file-remove-btn" onclick="clearSelectedFile(event)" title="Remove file">&times;</button>
+                </div>
+
+                <!-- Submit Button -->
+                <button type="button" id="start-btn" class="btn-primary" onclick="submitResume()">
+                    <span id="start-btn-text">Start Interview</span>
                 </button>
             </div>
+        </main>
 
-            <div id="profile-details-body">
-                <div id="profile-summary" class="profile-summary"></div>
-
-                <div class="profile-section-title">Identified Key Skills:</div>
-                <div id="profile-skills" class="skills-container"></div>
-
-                <!-- Projects (Rendered dynamically if available) -->
-                <div id="profile-projects-section" style="display: none; margin-top: 14px;">
-                    <div class="profile-section-title">Demonstrated Projects:</div>
-                    <div id="profile-projects" class="projects-container"></div>
-                </div>
-
-                <!-- Certifications (Rendered dynamically if available) -->
-                <div id="profile-certifications-section" style="display: none; margin-top: 14px;">
-                    <div class="profile-section-title">Certifications &amp; Credentials:</div>
-                    <div id="profile-certifications" class="certifications-container"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Active Chat Terminal -->
-        <div id="chat-section">
-            <div class="chat-header-bar">
-                <div class="chat-status-indicator">
-                    <span class="live-dot"></span>
-                    <span>Technical Interview in Progress</span>
-                </div>
-                <div class="session-actions">
-                    <button type="button" class="btn-secondary" onclick="resetInterviewSession()" title="Reset and upload another resume">
-                        🔄 New Session
-                    </button>
-                </div>
-            </div>
-
-            <!-- Messages Window -->
-            <div class="chat-container" id="chat-window">
-                <!-- Messages appended dynamically by app.js -->
+        <!-- VIEW 2: Conversation View (Active Interview Screen) -->
+        <main id="chat-view" class="view-panel" style="display: none;">
+            <!-- Message Feed -->
+            <div id="chat-messages" class="chat-container">
+                <!-- Messages populated dynamically by app.js -->
             </div>
 
             <!-- Input Bar -->
-            <div class="input-bar">
-                <textarea id="user-input" class="chat-input"
-                    placeholder="Type your response to the Interviewer... (Press Enter to send, Shift+Enter for newline)"
-                    rows="1" onkeydown="handleInputKeydown(event)" oninput="autoResizeTextarea(this)"></textarea>
-                <button type="button" class="btn-send" id="send-btn" onclick="sendMessage()" title="Send response (Enter)">
-                    <span>Send</span>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
+            <div class="input-container">
+                <textarea id="user-input" class="chat-textarea"
+                    placeholder="Type your response to the interviewer... (Press Enter to send, Shift+Enter for newline)"
+                    rows="1" onkeydown="handleKeydown(event)" oninput="autoGrow(this)"></textarea>
+                <button type="button" id="send-btn" class="btn-send" onclick="sendCandidateMessage()" title="Send message (Enter)">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="22" y1="2" x2="11" y2="13"></line>
                         <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
                     </svg>
                 </button>
             </div>
-            <div class="hint">Press <strong>Enter</strong> to submit your response. <strong>Shift + Enter</strong> adds a line break.</div>
-        </div>
+            <div class="input-hint">Press <strong>Enter</strong> to send &bull; <strong>Shift + Enter</strong> for a new line</div>
+        </main>
+
     </div>
 
-    <!-- Application Logic -->
-    <script src="/static/app.js"></script>
+    <!-- Relative script path -->
+    <script src="static/app.js"></script>
 </body>
 
 </html>
