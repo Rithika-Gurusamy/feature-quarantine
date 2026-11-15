@@ -8,6 +8,108 @@ let lastMessageId = null;
 let isBusy = false;
 let activeBackendUrl = null;
 
+// ── Voice Input State ──────────────────────────────────────────
+let recognition = null;
+let isListening = false;
+
+// ── Voice Input (Web Speech API) ──────────────────────────────
+function toggleVoiceInput() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        showAlert('Voice input is not supported in this browser. Please use Chrome or Edge.');
+        console.warn('[Voice] SpeechRecognition API not available in this browser.');
+        return;
+    }
+    if (isListening) {
+        console.log('[Voice] Stopping recording...');
+        stopVoiceInput();
+    } else {
+        console.log('[Voice] Starting recording...');
+        startVoiceInput(SpeechRecognition);
+    }
+}
+
+function startVoiceInput(SpeechRecognition) {
+    recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = true;   // show partial results live in textarea
+    recognition.continuous = false;       // auto-stop after pause
+
+    const micBtn = document.getElementById('mic-btn');
+    const textarea = document.getElementById('user-input');
+
+    isListening = true;
+    if (micBtn) {
+        micBtn.classList.add('recording');
+        micBtn.title = 'Listening… click to stop';
+        micBtn.textContent = '🔴';
+    }
+    console.log('[Voice] Listening started. Speak now...');
+
+    // Track the text that was already in the textarea before speech
+    const priorText = textarea ? textarea.value : '';
+
+    recognition.onstart = () => {
+        console.log('[Voice] Speech recognition started.');
+    };
+
+    recognition.onresult = (event) => {
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            const result = event.results[i];
+            if (result.isFinal) {
+                finalTranscript += result[0].transcript;
+            } else {
+                interimTranscript += result[0].transcript;
+            }
+        }
+
+        // Show live interim result in textarea so user can see what's captured
+        const captured = finalTranscript || interimTranscript;
+        if (textarea) {
+            // Append to any prior text, with a space separator if needed
+            const separator = priorText && !priorText.endsWith(' ') ? ' ' : '';
+            textarea.value = priorText + separator + captured;
+            autoGrow(textarea);
+        }
+        console.log(`[Voice] Captured (interim=${!finalTranscript}): "${captured}"`);
+    };
+
+    recognition.onend = () => {
+        console.log('[Voice] Speech recognition ended.');
+        stopVoiceInput();
+        // Focus textarea so user can review/edit before sending
+        if (textarea) textarea.focus();
+    };
+
+    recognition.onerror = (event) => {
+        console.error(`[Voice] Recognition error: ${event.error}`);
+        stopVoiceInput();
+        if (event.error !== 'aborted' && event.error !== 'no-speech') {
+            showAlert(`Voice recognition error: ${event.error}. Try again or type your response.`);
+        }
+    };
+
+    recognition.start();
+}
+
+function stopVoiceInput() {
+    if (recognition) {
+        try { recognition.stop(); } catch (_) {}
+        recognition = null;
+    }
+    isListening = false;
+    const micBtn = document.getElementById('mic-btn');
+    if (micBtn) {
+        micBtn.classList.remove('recording');
+        micBtn.title = 'Speak your response';
+        micBtn.textContent = '🎙️';
+    }
+    console.log('[Voice] Listening stopped.');
+}
+
 // ── Dynamic Backend URL Resolution ────────────────────────────
 async function resolveBackendUrl() {
     // If opened directly from the FastAPI server (e.g. http://127.0.0.1:8000 or http://localhost:8000)
