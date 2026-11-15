@@ -6,39 +6,65 @@
 let currentConversationId = null;
 let lastMessageId = null;
 let isBusy = false;
+let activeBackendUrl = null;
 
-// ── Backend URL Resolution ────────────────────────────────────
-function getBackendUrl() {
+// ── Dynamic Backend URL Resolution ────────────────────────────
+async function resolveBackendUrl() {
+    // If opened directly from the FastAPI server (e.g. http://127.0.0.1:8000 or http://localhost:8000)
     if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
-        if (window.location.port === '8000') {
-            return window.location.origin;
+        if (window.location.port !== '5500') {
+            activeBackendUrl = window.location.origin;
+            return activeBackendUrl;
         }
     }
-    // Default backend URL
-    return 'http://localhost:8000';
+
+    // If opened via file:/// or Live Server (5500), probe 127.0.0.1:8000 first (Uvicorn default IPv4)
+    const candidates = ['http://127.0.0.1:8000', 'http://localhost:8000'];
+    for (const url of candidates) {
+        try {
+            const res = await fetch(`${url}/api/health`, { method: 'GET' });
+            if (res.ok) {
+                activeBackendUrl = url;
+                console.log(`[Backend] Successfully connected to ${url}`);
+                return activeBackendUrl;
+            }
+        } catch (_) {}
+    }
+
+    // Default to 127.0.0.1:8000
+    activeBackendUrl = 'http://127.0.0.1:8000';
+    return activeBackendUrl;
+}
+
+function getBackendUrl() {
+    return activeBackendUrl || 'http://127.0.0.1:8000';
 }
 
 // ── Health Check on Load ──────────────────────────────────────
 async function pingBackend() {
-    const backend = getBackendUrl();
+    const backend = await resolveBackendUrl();
+    console.log(`[Init] Checking backend health at ${backend}/api/health...`);
+
     try {
         const res = await fetch(`${backend}/api/health`, { method: 'GET' });
         if (res.ok) {
             const data = await res.json();
+            console.log('[Init] Server response:', data);
             if (data.redis_connected) {
                 setStatus('Ready', true);
+                hideAlert();
             } else {
                 setStatus('Redis Offline', false);
-                showAlert('Redis is not reachable on localhost:6379. Make sure Redis is started.');
+                showAlert('Redis is offline! Please start Redis on localhost:6379.');
             }
         } else {
             setStatus('Degraded', false);
         }
     } catch (e) {
-        setStatus('Backend Offline', false);
+        console.warn(`[Init] Could not reach backend:`, e.message);
+        setStatus('Offline', false);
         showAlert(
-            `Cannot connect to FastAPI backend at ${backend}. ` +
-            `Make sure you ran \`uvicorn app:app --reload --port 8000\` and opened http://localhost:8000 in your browser.`
+            `Cannot connect to FastAPI backend. Please open http://127.0.0.1:8000 directly in your browser.`
         );
     }
 }
@@ -106,7 +132,6 @@ async function submitResume() {
     const fileInput = document.getElementById('resume-file');
     const startBtn = document.getElementById('start-btn');
     const startBtnText = document.getElementById('start-btn-text');
-    const backend = getBackendUrl();
 
     if (!fileInput.files || fileInput.files.length === 0) {
         showAlert('Please choose or drop your PDF resume to start.');
@@ -119,7 +144,9 @@ async function submitResume() {
         return;
     }
 
-    // Set UI loading state
+    // Ensure backend URL is resolved
+    const backend = await resolveBackendUrl();
+
     startBtn.disabled = true;
     startBtnText.innerHTML = '<span class="spinner"></span> Analyzing Resume with Gemini...';
     setStatus('Analyzing...', false);
@@ -127,10 +154,11 @@ async function submitResume() {
     const formData = new FormData();
     formData.append('file', file);
 
-    try {
-        console.log(`[Upload] Sending ${file.name} to ${backend}/resume/upload...`);
+    const uploadUrl = `${backend}/resume/upload`;
+    console.log(`[Upload] Sending ${file.name} to ${uploadUrl}...`);
 
-        const res = await fetch(`${backend}/resume/upload`, {
+    try {
+        const res = await fetch(uploadUrl, {
             method: 'POST',
             body: formData
         });
@@ -143,6 +171,11 @@ async function submitResume() {
             } catch (_) {
                 detail = `HTTP ${res.status}: ${res.statusText}`;
             }
+
+            if (res.status === 404) {
+                detail = `404 Not Found from ${uploadUrl}. Please open http://127.0.0.1:8000 in your browser.`;
+            }
+
             throw new Error(detail);
         }
 
@@ -187,11 +220,13 @@ async function submitResume() {
 async function triggerKickoff() {
     showTyping();
     const backend = getBackendUrl();
+    const chatUrl = `${backend}/chat`;
 
     const kickoffPrompt = "Hello. I have submitted my resume and I'm ready to begin the technical interview.";
+    console.log(`[Chat] Sending kickoff prompt to ${chatUrl}...`);
 
     try {
-        const res = await fetch(`${backend}/chat`, {
+        const res = await fetch(chatUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -231,6 +266,7 @@ async function sendCandidateMessage() {
     const message = input.value.trim();
     const sendBtn = document.getElementById('send-btn');
     const backend = getBackendUrl();
+    const chatUrl = `${backend}/chat`;
 
     if (!message) return;
     if (!currentConversationId) {
@@ -240,7 +276,6 @@ async function sendCandidateMessage() {
 
     hideAlert();
 
-    // Render candidate message immediately
     appendMessage('user', message);
     input.value = '';
     autoGrow(input);
@@ -256,7 +291,7 @@ async function sendCandidateMessage() {
             parent_id: lastMessageId
         };
 
-        const res = await fetch(`${backend}/chat`, {
+        const res = await fetch(chatUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -278,7 +313,6 @@ async function sendCandidateMessage() {
         const data = await res.json();
         lastMessageId = data.message_id;
 
-        // Render AI response
         appendMessage('ai', data.response);
 
     } catch (err) {
@@ -399,21 +433,14 @@ function renderMarkdown(text) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
 
-    // Code blocks ```code```
     escaped = escaped.replace(/```([\s\S]*?)```/g, (_, code) => {
         return '<pre><code>' + code.trim() + '</code></pre>';
     });
 
-    // Inline code `code`
     escaped = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-    // Bold **text**
     escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-    // Italic *text*
     escaped = escaped.replace(/\*([^*]+)\*/g, '<em>$1</em>');
 
-    // Paragraphs and lists
     const lines = escaped.split('\n');
     let out = '';
     let inList = false;
