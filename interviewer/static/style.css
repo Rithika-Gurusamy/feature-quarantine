@@ -530,6 +530,48 @@ body {
     50%       { box-shadow: 0 0 0 7px rgba(239, 68, 68, 0); }
 }
 
+/* AI Message Actions Row (Read Aloud button) */
+.message-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 0 2px;
+}
+
+.btn-speak {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid #2a3754;
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 11.5px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-speak:hover {
+    background: rgba(59, 130, 246, 0.1);
+    border-color: var(--primary);
+    color: #93c5fd;
+}
+
+.btn-speak.speaking {
+    background: rgba(16, 185, 129, 0.1);
+    border-color: var(--success);
+    color: #34d399;
+    animation: pulse-speak 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-speak {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.65; }
+}
+
 .input-hint {
     font-size: 11px;
     color: var(--text-muted);

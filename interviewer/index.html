@@ -92,10 +92,16 @@
             <!-- Input Bar -->
             <div class="input-container">
                 <textarea id="user-input" class="chat-textarea"
-                    placeholder="Type your response or press 🎙️ to speak... (Enter to send, Shift+Enter for newline)"
+                    placeholder="Type your response or click the mic to speak... (Enter to send)"
                     rows="1" onkeydown="handleKeydown(event)" oninput="autoGrow(this)"></textarea>
                 <button type="button" id="mic-btn" class="btn-mic" onclick="toggleVoiceInput()" title="Speak your response">
-                    🎙️
+                    <!-- Microphone SVG icon -->
+                    <svg id="mic-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="2" width="6" height="11" rx="3"></rect>
+                        <path d="M5 10a7 7 0 0 0 14 0"></path>
+                        <line x1="12" y1="17" x2="12" y2="21"></line>
+                        <line x1="8" y1="21" x2="16" y2="21"></line>
+                    </svg>
                 </button>
                 <button type="button" id="send-btn" class="btn-send" onclick="sendCandidateMessage()" title="Send message (Enter)">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

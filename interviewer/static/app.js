@@ -42,7 +42,10 @@ function startVoiceInput(SpeechRecognition) {
     if (micBtn) {
         micBtn.classList.add('recording');
         micBtn.title = 'Listening… click to stop';
-        micBtn.textContent = '🔴';
+        micBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="12" cy="12" r="8" opacity="0.3"/>
+            <circle cx="12" cy="12" r="4"/>
+        </svg>`;
     }
     console.log('[Voice] Listening started. Speak now...');
 
@@ -105,7 +108,12 @@ function stopVoiceInput() {
     if (micBtn) {
         micBtn.classList.remove('recording');
         micBtn.title = 'Speak your response';
-        micBtn.textContent = '🎙️';
+        micBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="2" width="6" height="11" rx="3"></rect>
+            <path d="M5 10a7 7 0 0 0 14 0"></path>
+            <line x1="12" y1="17" x2="12" y2="21"></line>
+            <line x1="8" y1="21" x2="16" y2="21"></line>
+        </svg>`;
     }
     console.log('[Voice] Listening stopped.');
 }
@@ -448,10 +456,114 @@ function appendMessage(role, text) {
 
     content.appendChild(sender);
     content.appendChild(bubble);
-    row.appendChild(content);
 
+    // Add read-aloud button only on AI messages
+    if (role === 'ai') {
+        const actionsRow = document.createElement('div');
+        actionsRow.className = 'message-actions';
+
+        const speakBtn = document.createElement('button');
+        speakBtn.type = 'button';
+        speakBtn.className = 'btn-speak';
+        speakBtn.title = 'Read this question aloud';
+        speakBtn.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+            </svg>
+            <span>Read aloud</span>`;
+
+        speakBtn.addEventListener('click', () => toggleReadAloud(text, speakBtn));
+        actionsRow.appendChild(speakBtn);
+        content.appendChild(actionsRow);
+    }
+
+    row.appendChild(content);
     feed.appendChild(row);
     feed.scrollTop = feed.scrollHeight;
+}
+
+// ── Text-to-Speech (Read AI Messages Aloud) ───────────────────
+let currentUtterance = null;
+
+function stripMarkdown(text) {
+    // Remove markdown so TTS reads clean prose
+    return text
+        .replace(/```[\s\S]*?```/g, '')   // code blocks
+        .replace(/`[^`]+`/g, '')           // inline code
+        .replace(/\*\*([^*]+)\*\*/g, '$1') // bold
+        .replace(/\*([^*]+)\*/g, '$1')     // italic
+        .replace(/^[-*]\s+/gm, '')         // list bullets
+        .replace(/\n+/g, ' ')              // newlines → spaces
+        .trim();
+}
+
+function toggleReadAloud(rawText, btn) {
+    if (!window.speechSynthesis) {
+        console.warn('[TTS] speechSynthesis not supported in this browser.');
+        return;
+    }
+
+    // If already speaking THIS button's utterance — stop it
+    if (btn.classList.contains('speaking')) {
+        window.speechSynthesis.cancel();
+        currentUtterance = null;
+        resetSpeakBtn(btn);
+        console.log('[TTS] Stopped.');
+        return;
+    }
+
+    // Cancel any other ongoing speech first
+    window.speechSynthesis.cancel();
+    document.querySelectorAll('.btn-speak.speaking').forEach(resetSpeakBtn);
+
+    const cleanText = stripMarkdown(rawText);
+    if (!cleanText) return;
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.95;
+    utterance.pitch = 1.0;
+
+    console.log('[TTS] Reading aloud:', cleanText.substring(0, 80) + '...');
+
+    // Visual state: speaking
+    btn.classList.add('speaking');
+    btn.title = 'Click to stop reading';
+    btn.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="4" width="4" height="16" rx="1"></rect>
+            <rect x="14" y="4" width="4" height="16" rx="1"></rect>
+        </svg>
+        <span>Stop</span>`;
+
+    utterance.onend = () => {
+        currentUtterance = null;
+        resetSpeakBtn(btn);
+        console.log('[TTS] Finished reading.');
+    };
+
+    utterance.onerror = (e) => {
+        currentUtterance = null;
+        resetSpeakBtn(btn);
+        console.warn('[TTS] Error:', e.error);
+    };
+
+    currentUtterance = utterance;
+    window.speechSynthesis.speak(utterance);
+}
+
+function resetSpeakBtn(btn) {
+    btn.classList.remove('speaking');
+    btn.title = 'Read this question aloud';
+    btn.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+        </svg>
+        <span>Read aloud</span>`;
 }
 
 // ── Typing Indicator ──────────────────────────────────────────
