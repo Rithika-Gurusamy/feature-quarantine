@@ -519,10 +519,17 @@ body {
 }
 
 .btn-mic.recording {
-    background: rgba(239, 68, 68, 0.15);
+    background: rgba(239, 68, 68, 0.2);
     border-color: #ef4444;
     color: #ef4444;
     animation: pulse-mic 1s ease-in-out infinite;
+}
+
+.btn-mic.transcribing {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: var(--primary);
+    color: var(--primary);
+    cursor: wait;
 }
 
 @keyframes pulse-mic {

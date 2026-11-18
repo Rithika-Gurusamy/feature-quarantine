@@ -2,6 +2,8 @@ import os
 import sys
 import uuid
 import json
+import base64
+import requests
 import traceback
 from datetime import datetime, UTC
 from io import BytesIO
@@ -364,6 +366,116 @@ async def chat_endpoint(payload: ChatRequest):
         print(f"  [EXCEPTION] LLM Chat Error: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"LLM Chat Error: {str(e)}")
+
+# ── Speech-to-Text Transcription Endpoint (Universal Cross-Browser) ─
+@app.post("/api/transcribe", tags=["Voice"])
+@app.post("/transcribe", tags=["Voice"])
+async def transcribe_audio(
+    file: UploadFile = File(..., description="Audio file recorded in any browser")
+):
+    """
+    Universal speech-to-text endpoint powered by Gemini Flash.
+    Works natively across all modern browsers (Chrome, Firefox, Safari, Edge)
+    by receiving standard audio recorded via MediaRecorder (WebM, Ogg, WAV, MP4).
+    """
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="GEMINI_API_KEY is not configured on the backend."
+        )
+
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    print("\n" + "─" * 60)
+    print(f"[{timestamp}] [AUDIO TRANSCRIPTION] Received audio clip from client")
+
+    try:
+        audio_bytes = await file.read()
+        byte_len = len(audio_bytes)
+        print(f"  • Content-Type : {file.content_type}")
+        print(f"  • Size         : {byte_len:,} bytes ({byte_len / 1024:.1f} KB)")
+
+        if byte_len < 200:
+            print("  • Audio too short / silent. Returning empty string.")
+            return {"text": ""}
+
+        content_type = file.content_type or "audio/webm"
+        clean_mime = content_type.split(";")[0].strip().lower()
+        allowed_mimes = ["audio/webm", "audio/ogg", "audio/wav", "audio/mp4", "audio/mpeg", "audio/mp3", "audio/x-wav"]
+        if clean_mime not in allowed_mimes:
+            clean_mime = "audio/webm"
+
+        b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
+
+        prompt = (
+            "Transcribe the spoken speech in this audio clip into plain text. "
+            "Return ONLY the transcribed text. Do NOT add any quotes, explanations, markdown, or timestamps. "
+            "If the audio contains only background noise or silence, return nothing."
+        )
+
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "inline_data": {
+                                "mime_type": clean_mime,
+                                "data": b64_audio
+                            }
+                        },
+                        {
+                            "text": prompt
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.0
+            }
+        }
+
+        # Try gemini-2.5-flash first, fallback to gemini-1.5-flash
+        model_name = "gemini-2.5-flash"
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+        
+        t0 = datetime.now()
+        resp = requests.post(api_url, json=payload, timeout=25)
+
+        if resp.status_code == 404:
+            # Fallback model
+            model_name = "gemini-1.5-flash"
+            fallback_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+            resp = requests.post(fallback_url, json=payload, timeout=25)
+
+        elapsed = (datetime.now() - t0).total_seconds()
+
+        if not resp.ok:
+            print(f"  [ERROR] Gemini Audio API returned status {resp.status_code}: {resp.text}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Gemini Speech-to-Text service error (HTTP {resp.status_code})."
+            )
+
+        result_json = resp.json()
+        candidates = result_json.get("candidates", [])
+        transcribed_text = ""
+
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if parts:
+                transcribed_text = parts[0].get("text", "").strip()
+
+        print(f"  • Gemini transcribed in {elapsed:.2f}s using {model_name}")
+        print(f"  • Result: \"{transcribed_text}\"")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] [AUDIO TRANSCRIPTION] Complete.\n" + "─" * 60 + "\n")
+
+        return {"text": transcribed_text}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"  [EXCEPTION] Transcription failed: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Transcription error: {str(e)}")
 
 # ── Session Details Endpoint ──────────────────────────────────
 @app.get("/api/session/{conversation_id}", tags=["Interview"])

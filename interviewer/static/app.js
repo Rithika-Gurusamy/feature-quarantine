@@ -8,114 +8,219 @@ let lastMessageId = null;
 let isBusy = false;
 let activeBackendUrl = null;
 
-// ── Voice Input State ──────────────────────────────────────────
-let recognition = null;
-let isListening = false;
+// ── Universal Cross-Browser Voice Input State (MediaRecorder) ──
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+let recordingSafetyTimeout = null;
 
-// ── Voice Input (Web Speech API) ──────────────────────────────
-function toggleVoiceInput() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-        showAlert('Voice input is not supported in this browser. Please use Chrome or Edge.');
-        console.warn('[Voice] SpeechRecognition API not available in this browser.');
-        return;
-    }
-    if (isListening) {
+// ── Voice Input (Universal across Chrome, Firefox, Safari, Edge) ──
+async function toggleVoiceInput() {
+    if (isRecording) {
         console.log('[Voice] Stopping recording...');
         stopVoiceInput();
     } else {
-        console.log('[Voice] Starting recording...');
-        startVoiceInput(SpeechRecognition);
+        console.log('[Voice] Requesting microphone and starting recording...');
+        await startVoiceInput();
     }
 }
 
-function startVoiceInput(SpeechRecognition) {
-    recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
-    recognition.interimResults = true;   // show partial results live in textarea
-    recognition.continuous = false;       // auto-stop after pause
-
+async function startVoiceInput() {
+    hideAlert();
     const micBtn = document.getElementById('mic-btn');
-    const textarea = document.getElementById('user-input');
 
-    isListening = true;
-    if (micBtn) {
-        micBtn.classList.add('recording');
-        micBtn.title = 'Listening… click to stop';
-        micBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            <circle cx="12" cy="12" r="8" opacity="0.3"/>
-            <circle cx="12" cy="12" r="4"/>
-        </svg>`;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showAlert('Microphone is not supported in this browser environment. Please make sure the app is opened via http://localhost or HTTPS.');
+        console.error('[Voice] navigator.mediaDevices.getUserMedia is unavailable.');
+        return;
     }
-    console.log('[Voice] Listening started. Speak now...');
 
-    // Track the text that was already in the textarea before speech
-    const priorText = textarea ? textarea.value : '';
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    recognition.onstart = () => {
-        console.log('[Voice] Speech recognition started.');
-    };
-
-    recognition.onresult = (event) => {
-        let interimTranscript = '';
-        let finalTranscript = '';
-
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-            const result = event.results[i];
-            if (result.isFinal) {
-                finalTranscript += result[0].transcript;
-            } else {
-                interimTranscript += result[0].transcript;
+        // Detect supported MIME type across all modern browsers
+        let mimeType = 'audio/webm';
+        if (typeof MediaRecorder !== 'undefined') {
+            if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+                mimeType = 'audio/webm;codecs=opus';
+            } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+                mimeType = 'audio/webm';
+            } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+                mimeType = 'audio/ogg;codecs=opus'; // Common in Firefox
+            } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
+                mimeType = 'audio/ogg';
+            } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+                mimeType = 'audio/mp4'; // Safari
             }
         }
 
-        // Show live interim result in textarea so user can see what's captured
-        const captured = finalTranscript || interimTranscript;
-        if (textarea) {
-            // Append to any prior text, with a space separator if needed
-            const separator = priorText && !priorText.endsWith(' ') ? ' ' : '';
-            textarea.value = priorText + separator + captured;
-            autoGrow(textarea);
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data && event.data.size > 0) {
+                audioChunks.push(event.data);
+            }
+        };
+
+        mediaRecorder.onstop = async () => {
+            // Release hardware microphone tracks immediately
+            stream.getTracks().forEach(track => track.stop());
+            if (recordingSafetyTimeout) {
+                clearTimeout(recordingSafetyTimeout);
+                recordingSafetyTimeout = null;
+            }
+
+            const actualMime = mediaRecorder.mimeType || mimeType || 'audio/webm';
+            const audioBlob = new Blob(audioChunks, { type: actualMime });
+            console.log(`[Voice] Audio recording captured: ${audioBlob.size} bytes (${actualMime})`);
+
+            if (audioBlob.size < 200) {
+                console.log('[Voice] Audio recording was empty or too brief.');
+                resetMicButtonUI();
+                return;
+            }
+
+            await sendAudioForTranscription(audioBlob);
+        };
+
+        mediaRecorder.start();
+        isRecording = true;
+
+        // Visual feedback: Recording active (pulsing red + stop icon)
+        if (micBtn) {
+            micBtn.classList.add('recording');
+            micBtn.classList.remove('transcribing');
+            micBtn.title = 'Listening… click to stop and transcribe';
+            micBtn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+                </svg>`;
         }
-        console.log(`[Voice] Captured (interim=${!finalTranscript}): "${captured}"`);
-    };
 
-    recognition.onend = () => {
-        console.log('[Voice] Speech recognition ended.');
-        stopVoiceInput();
-        // Focus textarea so user can review/edit before sending
-        if (textarea) textarea.focus();
-    };
+        // Safety timeout: automatically stop after 60 seconds of continuous recording
+        recordingSafetyTimeout = setTimeout(() => {
+            if (isRecording) {
+                console.log('[Voice] 60-second limit reached, auto-stopping...');
+                stopVoiceInput();
+            }
+        }, 60000);
 
-    recognition.onerror = (event) => {
-        console.error(`[Voice] Recognition error: ${event.error}`);
-        stopVoiceInput();
-        if (event.error !== 'aborted' && event.error !== 'no-speech') {
-            showAlert(`Voice recognition error: ${event.error}. Try again or type your response.`);
+    } catch (err) {
+        console.error('[Voice] Error acquiring microphone:', err);
+        isRecording = false;
+        resetMicButtonUI();
+
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            showAlert('Microphone access was denied. Please allow microphone permissions in your browser URL bar.');
+        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+            showAlert('No microphone detected on your system. Please plug in a microphone and try again.');
+        } else {
+            showAlert(`Microphone error: ${err.message}`);
         }
-    };
-
-    recognition.start();
+    }
 }
 
 function stopVoiceInput() {
-    if (recognition) {
-        try { recognition.stop(); } catch (_) {}
-        recognition = null;
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        try {
+            mediaRecorder.stop();
+        } catch (e) {
+            console.warn('[Voice] Error stopping mediaRecorder:', e);
+        }
     }
-    isListening = false;
+    isRecording = false;
+    if (recordingSafetyTimeout) {
+        clearTimeout(recordingSafetyTimeout);
+        recordingSafetyTimeout = null;
+    }
+}
+
+function resetMicButtonUI() {
     const micBtn = document.getElementById('mic-btn');
     if (micBtn) {
         micBtn.classList.remove('recording');
+        micBtn.classList.remove('transcribing');
+        micBtn.disabled = false;
         micBtn.title = 'Speak your response';
-        micBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="9" y="2" width="6" height="11" rx="3"></rect>
-            <path d="M5 10a7 7 0 0 0 14 0"></path>
-            <line x1="12" y1="17" x2="12" y2="21"></line>
-            <line x1="8" y1="21" x2="16" y2="21"></line>
-        </svg>`;
+        micBtn.innerHTML = `
+            <svg id="mic-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="2" width="6" height="11" rx="3"></rect>
+                <path d="M5 10a7 7 0 0 0 14 0"></path>
+                <line x1="12" y1="17" x2="12" y2="21"></line>
+                <line x1="8" y1="21" x2="16" y2="21"></line>
+            </svg>`;
     }
-    console.log('[Voice] Listening stopped.');
+}
+
+async function sendAudioForTranscription(audioBlob) {
+    const micBtn = document.getElementById('mic-btn');
+    const textarea = document.getElementById('user-input');
+
+    // Show transcribing state on mic button
+    if (micBtn) {
+        micBtn.classList.remove('recording');
+        micBtn.classList.add('transcribing');
+        micBtn.disabled = true;
+        micBtn.title = 'Converting speech to text with Gemini...';
+        micBtn.innerHTML = `<span class="spinner" style="width:16px;height:16px;border-width:2px;"></span>`;
+    }
+
+    const backend = getBackendUrl();
+    const transcribeUrl = `${backend}/api/transcribe`;
+
+    // Determine clean file extension
+    let ext = 'webm';
+    if (audioBlob.type.includes('ogg')) ext = 'ogg';
+    else if (audioBlob.type.includes('mp4')) ext = 'mp4';
+    else if (audioBlob.type.includes('wav')) ext = 'wav';
+
+    const formData = new FormData();
+    formData.append('file', audioBlob, `speech.${ext}`);
+
+    console.log(`[Voice] Uploading ${audioBlob.size} bytes to ${transcribeUrl}...`);
+
+    try {
+        const res = await fetch(transcribeUrl, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!res.ok) {
+            let detail = 'Voice transcription failed';
+            try {
+                const errData = await res.json();
+                detail = errData.detail || detail;
+            } catch (_) {
+                detail = `HTTP ${res.status}: ${res.statusText}`;
+            }
+            throw new Error(detail);
+        }
+
+        const data = await res.json();
+        const text = (data.text || '').trim();
+
+        if (text) {
+            console.log(`[Voice] Transcription success: "${text}"`);
+            if (textarea) {
+                const prior = textarea.value.trim();
+                const separator = prior ? ' ' : '';
+                textarea.value = prior + separator + text;
+                autoGrow(textarea);
+                textarea.focus();
+            }
+        } else {
+            console.log('[Voice] No speech recognized in audio.');
+            showAlert('Could not detect clear speech. Please try speaking closer to your mic.');
+        }
+
+    } catch (err) {
+        console.error('[Voice] Transcription error:', err);
+        showAlert(`Speech-to-text error: ${err.message}`);
+    } finally {
+        resetMicButtonUI();
+        if (textarea) textarea.focus();
+    }
 }
 
 // ── Dynamic Backend URL Resolution ────────────────────────────
