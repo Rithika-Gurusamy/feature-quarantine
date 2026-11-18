@@ -92,6 +92,80 @@ body {
     border-radius: 999px;
 }
 
+/* 5-Minute Timer Pill */
+.timer-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 4px 11px;
+    border-radius: 999px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: #93c5fd;
+    transition: all 0.25s ease;
+}
+
+.timer-pill .timer-icon {
+    color: #60a5fa;
+}
+
+.timer-pill.warning {
+    border-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+    color: #fbbf24;
+}
+
+.timer-pill.warning .timer-icon {
+    color: #f59e0b;
+}
+
+.timer-pill.danger {
+    border-color: #ef4444;
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    animation: pulse-danger 1s infinite ease-in-out;
+}
+
+.timer-pill.danger .timer-icon {
+    color: #ef4444;
+}
+
+.timer-pill.expired {
+    border-color: #dc2626;
+    background: rgba(220, 38, 38, 0.2);
+    color: #fca5a5;
+}
+
+@keyframes pulse-danger {
+    0%, 100% { transform: scale(1); }
+    50%       { transform: scale(1.05); }
+}
+
+/* Time-up notification banner in chat */
+.time-up-card {
+    align-self: center;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 20px;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 12px;
+    color: #fca5a5;
+    font-size: 13.5px;
+    font-weight: 500;
+    margin: 8px 0;
+    animation: fadeIn 0.3s ease-out;
+    text-align: center;
+}
+
+.time-up-card .time-up-icon {
+    font-size: 18px;
+}
+
 .status-pill {
     display: inline-flex;
     align-items: center;

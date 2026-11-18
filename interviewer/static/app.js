@@ -8,6 +8,12 @@ let lastMessageId = null;
 let isBusy = false;
 let activeBackendUrl = null;
 
+// ── 5-Minute Interview Timer State ─────────────────────────────
+const INTERVIEW_DURATION_SECONDS = 300; // 5 minutes
+let timerInterval = null;
+let secondsRemaining = INTERVIEW_DURATION_SECONDS;
+let isInterviewExpired = false;
+
 // ── Universal Cross-Browser Voice Input State (MediaRecorder) ──
 let mediaRecorder = null;
 let audioChunks = [];
@@ -16,6 +22,10 @@ let recordingSafetyTimeout = null;
 
 // ── Voice Input (Universal across Chrome, Firefox, Safari, Edge) ──
 async function toggleVoiceInput() {
+    if (isInterviewExpired) {
+        showAlert('The 5-minute technical assessment has concluded. Click "Restart" to begin a new interview.');
+        return;
+    }
     if (isRecording) {
         console.log('[Voice] Stopping recording...');
         stopVoiceInput();
@@ -341,6 +351,168 @@ function clearSelectedFile(e) {
     hideAlert();
 }
 
+// ── 5-Minute Countdown Timer Controller ────────────────────────
+function formatTimer(totalSeconds) {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+function startInterviewTimer() {
+    stopInterviewTimer();
+
+    secondsRemaining = INTERVIEW_DURATION_SECONDS;
+    isInterviewExpired = false;
+
+    const timerPill = document.getElementById('interview-timer');
+    const timerDisplay = document.getElementById('timer-display');
+
+    if (timerPill) {
+        timerPill.style.display = 'inline-flex';
+        timerPill.className = 'timer-pill';
+    }
+    if (timerDisplay) {
+        timerDisplay.textContent = formatTimer(secondsRemaining);
+    }
+
+    console.log(`[Timer] 5-Minute interview countdown initiated (${secondsRemaining}s).`);
+
+    timerInterval = setInterval(() => {
+        secondsRemaining--;
+
+        if (timerDisplay) {
+            timerDisplay.textContent = formatTimer(Math.max(0, secondsRemaining));
+        }
+
+        if (timerPill) {
+            if (secondsRemaining <= 15) {
+                timerPill.classList.remove('warning');
+                timerPill.classList.add('danger');
+            } else if (secondsRemaining <= 60) {
+                timerPill.classList.add('warning');
+            }
+        }
+
+        if (secondsRemaining <= 0) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+            handleInterviewTimeExpired();
+        }
+    }, 1000);
+}
+
+function stopInterviewTimer() {
+    if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+    }
+    secondsRemaining = INTERVIEW_DURATION_SECONDS;
+    isInterviewExpired = false;
+
+    const timerPill = document.getElementById('interview-timer');
+    const timerDisplay = document.getElementById('timer-display');
+
+    if (timerPill) {
+        timerPill.style.display = 'none';
+        timerPill.className = 'timer-pill';
+    }
+    if (timerDisplay) {
+        timerDisplay.textContent = '05:00';
+    }
+    console.log('[Timer] Stopped and reset.');
+}
+
+function handleInterviewTimeExpired() {
+    console.log('[Timer] 5-minute interview timer expired!');
+    isInterviewExpired = true;
+
+    // Stop recording if active
+    stopVoiceInput();
+
+    const timerPill = document.getElementById('interview-timer');
+    const timerDisplay = document.getElementById('timer-display');
+    if (timerPill) {
+        timerPill.classList.remove('warning', 'danger');
+        timerPill.classList.add('expired');
+    }
+    if (timerDisplay) {
+        timerDisplay.textContent = "00:00 (Time's Up)";
+    }
+
+    const input = document.getElementById('user-input');
+    const sendBtn = document.getElementById('send-btn');
+    const micBtn = document.getElementById('mic-btn');
+
+    if (input) {
+        input.value = '';
+        input.disabled = true;
+        input.placeholder = "⏱️ Interview concluded (5-min time limit reached). Check your feedback above.";
+    }
+    if (sendBtn) sendBtn.disabled = true;
+    if (micBtn) micBtn.disabled = true;
+
+    setStatus('Completed', true);
+    appendTimeUpNotification();
+    requestWrapupEvaluation();
+}
+
+function appendTimeUpNotification() {
+    const feed = document.getElementById('chat-messages');
+    if (!feed) return;
+
+    const row = document.createElement('div');
+    row.className = 'time-up-card';
+    row.innerHTML = `
+        <span class="time-up-icon">⏱️</span>
+        <span><strong>Time's up!</strong> The 5-minute technical assessment period has finished. Compiling your final performance review below...</span>
+    `;
+    feed.appendChild(row);
+    feed.scrollTop = feed.scrollHeight;
+}
+
+async function requestWrapupEvaluation() {
+    if (!currentConversationId) return;
+    showTyping();
+    const backend = getBackendUrl();
+    const chatUrl = `${backend}/chat`;
+
+    const wrapupPrompt = (
+        "The 5-minute technical interview time limit is reached. " +
+        "Based on our conversation and the candidate's responses, please provide a structured concluding performance review: " +
+        "1. Technical Competence & Depth demonstrated\n" +
+        "2. Key Strengths observed\n" +
+        "3. Areas for Improvement / Knowledge Gaps\n" +
+        "4. Overall Final Recommendation & encouraging closing remark."
+    );
+
+    try {
+        const payload = {
+            conversation_id: currentConversationId,
+            message: wrapupPrompt,
+            parent_id: lastMessageId
+        };
+
+        const res = await fetch(chatUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        removeTyping();
+
+        if (res.ok) {
+            const data = await res.json();
+            lastMessageId = data.message_id;
+            appendMessage('ai', data.response);
+        } else {
+            console.warn('[Timer] Wrap-up evaluation request failed status:', res.status);
+        }
+    } catch (e) {
+        removeTyping();
+        console.error('[Timer] Exception during wrap-up:', e);
+    }
+}
+
 // ── Upload Resume & Transition to Chat ────────────────────────
 async function submitResume() {
     hideAlert();
@@ -418,6 +590,9 @@ async function submitResume() {
         document.getElementById('upload-view').style.display = 'none';
         document.getElementById('chat-view').style.display = 'flex';
 
+        // Start 5-Minute Countdown Timer
+        startInterviewTimer();
+
         // Auto kickoff first interviewer question
         await triggerKickoff();
 
@@ -476,6 +651,10 @@ async function triggerKickoff() {
 // ── Send Candidate Response ───────────────────────────────────
 async function sendCandidateMessage() {
     if (isBusy) return;
+    if (isInterviewExpired) {
+        showAlert('The 5-minute technical assessment has concluded. Please click "Restart" to begin a new interview.');
+        return;
+    }
 
     const input = document.getElementById('user-input');
     const message = input.value.trim();
@@ -708,8 +887,11 @@ function removeTyping() {
 // ── Restart Session ───────────────────────────────────────────
 function restartSession() {
     if (confirm('Restart interview? This will clear the current dialogue and return to resume upload.')) {
+        stopInterviewTimer();
+
         currentConversationId = null;
         lastMessageId = null;
+        isInterviewExpired = false;
 
         const feed = document.getElementById('chat-messages');
         if (feed) feed.innerHTML = '';
@@ -725,6 +907,21 @@ function restartSession() {
         const restartBtn = document.getElementById('restart-btn');
         if (restartBtn) restartBtn.style.display = 'none';
 
+        const input = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const micBtn = document.getElementById('mic-btn');
+
+        if (input) {
+            input.disabled = false;
+            input.value = '';
+            input.placeholder = "Type your response or click the mic to speak... (Enter to send)";
+        }
+        if (sendBtn) sendBtn.disabled = false;
+        if (micBtn) {
+            micBtn.disabled = false;
+            resetMicButtonUI();
+        }
+
         setStatus('Ready', true);
         hideAlert();
     }
@@ -732,6 +929,7 @@ function restartSession() {
 
 // ── Textarea Keyboard & Auto-Resize ───────────────────────────
 function handleKeydown(e) {
+    if (isInterviewExpired) return;
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendCandidateMessage();
