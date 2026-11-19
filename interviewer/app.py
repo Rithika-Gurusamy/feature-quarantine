@@ -304,7 +304,7 @@ async def chat_endpoint(payload: ChatRequest):
         "   • Acknowledge and briefly critique/evaluate the candidate's previous response before moving to the next question.\n"
         "   • Ask ONE clear question at a time. Never dump multiple unrelated questions in one turn.\n"
         "   • If the candidate's answer is brief or lacks depth, probe deeper with a relevant follow-up question.\n"
-        "   • If the candidate indicates they wish to finish or ask questions, offer constructive feedback and wrap up.\n\n"
+        "   • When wrap-up or performance analysis is requested (e.g. at the end of the session), provide a structured Candidate Analysis Summary with: 1) What the candidate is good at (concrete technical strengths demonstrated), 2) Areas for improvement (specific trade-offs, missed edge cases, concepts to strengthen), and 3) An overall analytical summary & encouraging closing recommendation.\n\n"
         "Maintain an encouraging, highly professional, realistic, and technically rigorous interviewing style."
     )
 
