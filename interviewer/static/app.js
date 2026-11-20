@@ -422,22 +422,34 @@ function stopInterviewTimer() {
     console.log('[Timer] Stopped and reset.');
 }
 
-function handleInterviewTimeExpired() {
-    console.log('[Timer] 5-minute interview timer expired!');
+function finishInterviewEarly() {
+    if (confirm('Finish the interview now and generate your performance analysis summary?')) {
+        handleInterviewTimeExpired('early');
+    }
+}
+
+function handleInterviewTimeExpired(reason = 'timer') {
+    if (isInterviewExpired) return;
+    console.log(`[Timer] Interview conclusion triggered (reason: ${reason})`);
     isInterviewExpired = true;
 
-    // Stop recording if active
+    // Stop timer and audio recording
+    stopInterviewTimer();
     stopVoiceInput();
 
     const timerPill = document.getElementById('interview-timer');
     const timerDisplay = document.getElementById('timer-display');
     if (timerPill) {
+        timerPill.style.display = 'inline-flex';
         timerPill.classList.remove('warning', 'danger');
         timerPill.classList.add('expired');
     }
     if (timerDisplay) {
-        timerDisplay.textContent = "00:00 (Time's Up)";
+        timerDisplay.textContent = reason === 'early' ? 'Concluded' : "00:00 (Time's Up)";
     }
+
+    const finishBtn = document.getElementById('finish-btn');
+    if (finishBtn) finishBtn.style.display = 'none';
 
     const input = document.getElementById('user-input');
     const sendBtn = document.getElementById('send-btn');
@@ -446,25 +458,30 @@ function handleInterviewTimeExpired() {
     if (input) {
         input.value = '';
         input.disabled = true;
-        input.placeholder = "⏱️ Interview concluded (5-min time limit reached). Check your feedback above.";
+        input.placeholder = "Interview concluded. Your candidate performance analysis is generated above.";
     }
     if (sendBtn) sendBtn.disabled = true;
     if (micBtn) micBtn.disabled = true;
 
     setStatus('Completed', true);
-    appendTimeUpNotification();
+    appendTimeUpNotification(reason);
     requestWrapupEvaluation();
 }
 
-function appendTimeUpNotification() {
+function appendTimeUpNotification(reason) {
     const feed = document.getElementById('chat-messages');
     if (!feed) return;
 
     const row = document.createElement('div');
     row.className = 'time-up-card';
+    const title = reason === 'early' ? 'Interview Concluded' : "Time's up!";
+    const subtitle = reason === 'early'
+        ? "Session finished by candidate. Analyzing your technical responses..."
+        : "The 5-minute technical assessment period has finished. Analyzing your responses...";
+
     row.innerHTML = `
-        <span class="time-up-icon">⏱️</span>
-        <span><strong>Time's up!</strong> The 5-minute technical assessment period has finished. Compiling your final performance review below...</span>
+        <span class="time-up-icon">📋</span>
+        <span><strong>${title}:</strong> ${subtitle}</span>
     `;
     feed.appendChild(row);
     feed.scrollTop = feed.scrollHeight;
@@ -477,12 +494,17 @@ async function requestWrapupEvaluation() {
     const chatUrl = `${backend}/chat`;
 
     const wrapupPrompt = (
-        "The 5-minute technical interview time limit is reached. " +
-        "Based on our conversation and the candidate's responses, please provide a structured concluding performance review: " +
-        "1. Technical Competence & Depth demonstrated\n" +
-        "2. Key Strengths observed\n" +
-        "3. Areas for Improvement / Knowledge Gaps\n" +
-        "4. Overall Final Recommendation & encouraging closing remark."
+        "The technical interview session has finished. As the Senior Technical Interviewer, please provide a comprehensive Candidate Analysis Summary and Performance Breakdown based strictly on our conversation and the technical depth demonstrated.\n\n" +
+        "Please format your feedback clearly using the following structured sections:\n\n" +
+        "### 🌟 Technical Strengths (What You Are Good At)\n" +
+        "- List specific technical concepts, frameworks, architectures, or problem-solving traits where the candidate demonstrated solid competence, clarity, or practical experience.\n\n" +
+        "### 🎯 Areas for Improvement (What to Strengthen)\n" +
+        "- Detail specific topics, trade-offs, edge cases, or systems design depth where their answers were either brief, incomplete, or could be elevated.\n\n" +
+        "### 📊 Comprehensive Analysis Summary\n" +
+        "- Provide a professional synthesis of the candidate's technical profile, communication clarity, and engineering instincts.\n\n" +
+        "### 🚀 Recommended Next Steps & Practice Topics\n" +
+        "- Concrete, actionable recommendations on what to study or build next to advance their seniority.\n\n" +
+        "Keep the feedback realistic, constructive, and encouraging."
     );
 
     try {
@@ -580,9 +602,11 @@ async function submitResume() {
             roleBadge.style.display = 'inline-block';
         }
 
-        // Show restart button
+        // Show restart and finish buttons
         const restartBtn = document.getElementById('restart-btn');
         if (restartBtn) restartBtn.style.display = 'inline-block';
+        const finishBtn = document.getElementById('finish-btn');
+        if (finishBtn) finishBtn.style.display = 'inline-block';
 
         setStatus('Interviewing', true);
 
@@ -907,6 +931,9 @@ function restartSession() {
         const restartBtn = document.getElementById('restart-btn');
         if (restartBtn) restartBtn.style.display = 'none';
 
+        const finishBtn = document.getElementById('finish-btn');
+        if (finishBtn) finishBtn.style.display = 'none';
+
         const input = document.getElementById('user-input');
         const sendBtn = document.getElementById('send-btn');
         const micBtn = document.getElementById('mic-btn');
@@ -964,7 +991,16 @@ function renderMarkdown(text) {
 
     for (let line of lines) {
         const trimmed = line.trim();
-        if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+        if (trimmed.startsWith('### ')) {
+            if (inList) { out += '</ul>'; inList = false; }
+            out += '<h4 class="md-heading">' + trimmed.substring(4) + '</h4>';
+        } else if (trimmed.startsWith('## ')) {
+            if (inList) { out += '</ul>'; inList = false; }
+            out += '<h3 class="md-heading">' + trimmed.substring(3) + '</h3>';
+        } else if (trimmed.startsWith('# ')) {
+            if (inList) { out += '</ul>'; inList = false; }
+            out += '<h2 class="md-heading">' + trimmed.substring(2) + '</h2>';
+        } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
             if (!inList) {
                 out += '<ul>';
                 inList = true;
