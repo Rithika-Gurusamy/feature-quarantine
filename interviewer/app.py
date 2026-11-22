@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import uuid
 import json
@@ -130,6 +131,9 @@ class ChatResponse(BaseModel):
     message_id: str
     parent_id: str
     response: str
+    remaining_seconds: int = 300
+    is_expired: bool = False
+    phase: str = "interview"  # "interview" | "time_query" | "evaluation"
 
 # ── Redis Key Helpers ─────────────────────────────────────────
 def get_conversation_list_key(conversation_id: str) -> str:
