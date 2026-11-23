@@ -145,6 +145,166 @@ def get_message_key(message_id: str) -> str:
 def get_profile_key(conversation_id: str) -> str:
     return f"profile:{conversation_id}:resume"
 
+def get_session_meta_key(conversation_id: str) -> str:
+    return f"session:{conversation_id}:meta"
+
+# ==============================================================
+# ── Agent Architecture Nodes ──────────────────────────────────
+# ==============================================================
+
+class TimerNode:
+    """
+    [Agent Node 1: TimeKeeper & Temporal Governor]
+    Maintains the official session clock and lifecycle in Redis:
+    - Sets up the 5-minute (300-second) window when the interview starts.
+    - Computes elapsed time, remaining seconds, and expiration status on every turn.
+    - Intercepts temporal queries ("how much time left?", "time remaining") and answers directly.
+    - Determines when the session expires and directs the flow to EvaluationNode.
+    """
+    DEFAULT_DURATION_SECONDS = 300  # 5 minutes
+
+    @classmethod
+    def start_session(cls, conv_id: str, duration: int = DEFAULT_DURATION_SECONDS) -> dict:
+        now_ts = datetime.now(UTC).timestamp()
+        meta = {
+            "started_at": now_ts,
+            "duration_seconds": duration,
+            "status": "active"
+        }
+        r.set(get_session_meta_key(conv_id), json.dumps(meta))
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        print(f"[{timestamp}] [TimerNode] Initialized 5-minute timer for '{conv_id}' ({duration}s)")
+        return meta
+
+    @classmethod
+    def check_time(cls, conv_id: str) -> dict:
+        raw_meta = r.get(get_session_meta_key(conv_id))
+        now_ts = datetime.now(UTC).timestamp()
+
+        if not raw_meta:
+            meta = cls.start_session(conv_id)
+        else:
+            meta = json.loads(raw_meta)
+
+        started_at = meta.get("started_at", now_ts)
+        duration = meta.get("duration_seconds", cls.DEFAULT_DURATION_SECONDS)
+        elapsed = int(now_ts - started_at)
+        remaining = max(0, duration - elapsed)
+        is_expired = remaining <= 0 or meta.get("status") == "completed"
+
+        mins = remaining // 60
+        secs = remaining % 60
+        formatted = f"{mins:02d}:{secs:02d}"
+
+        return {
+            "elapsed_seconds": elapsed,
+            "remaining_seconds": remaining,
+            "is_expired": is_expired,
+            "formatted_remaining": formatted,
+            "status": "completed" if is_expired else meta.get("status", "active")
+        }
+
+    @classmethod
+    def is_time_query(cls, message: str) -> bool:
+        clean = message.strip().lower()
+        patterns = [
+            r"\b(how much time|time (left|remaining)|how many minutes|what is the time|duration left)\b",
+            r"\b(time's up|is time up|how long left)\b"
+        ]
+        return any(re.search(p, clean) for p in patterns)
+
+    @classmethod
+    def mark_completed(cls, conv_id: str):
+        raw_meta = r.get(get_session_meta_key(conv_id))
+        if raw_meta:
+            meta = json.loads(raw_meta)
+            meta["status"] = "completed"
+            r.set(get_session_meta_key(conv_id), json.dumps(meta))
+            print(f"  • [TimerNode] Marked session '{conv_id}' as completed")
+
+
+class EvaluationNode:
+    """
+    [Agent Node 2: Evaluator]
+    Synthesizes the entire technical dialogue and candidate resume into a structured
+    Candidate Analysis Summary (Strengths, Areas for Improvement, Synthesis, Next Steps).
+    """
+    @classmethod
+    async def evaluate(cls, conv_id: str, resume_context: dict, message_history: list) -> str:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        print(f"[{timestamp}] [EvaluationNode] Generating Candidate Performance Analysis Summary...")
+
+        inferred_role = resume_context.get("inferred_role", "Software Engineer")
+        eval_instruction = (
+            "You are a Senior Technical Evaluation Lead conducting an in-depth post-interview assessment.\n"
+            f"Candidate Target Role: {inferred_role}\n"
+            f"Candidate Resume Profile: {json.dumps(resume_context, indent=2)}\n\n"
+            "Review the technical dialogue and provide a structured, encouraging, and highly specific Candidate Analysis Summary:\n\n"
+            "### 🌟 Technical Strengths (What You Are Good At)\n"
+            "- Specific concepts, libraries, architectures, or engineering principles where the candidate showed competence.\n\n"
+            "### 🎯 Areas for Improvement (What to Strengthen)\n"
+            "- Concrete technical gaps, trade-offs not addressed, or concepts where their answers lacked depth.\n\n"
+            "### 📊 Comprehensive Analysis Summary\n"
+            "- Analytical synthesis of their technical readiness, problem-solving, and communication clarity.\n\n"
+            "### 🚀 Recommended Next Steps & Practice Topics\n"
+            "- 2-3 specific topics or real-world practice projects to advance their engineering seniority."
+        )
+
+        llm_messages = [SystemMessage(content=eval_instruction)]
+        for msg in message_history:
+            if msg["role"] == "user":
+                llm_messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                llm_messages.append(AIMessage(content=msg["content"]))
+
+        llm_messages.append(HumanMessage(content="The 5-minute technical assessment has concluded. Please present your complete Candidate Analysis Summary."))
+
+        ai_response = await llm.ainvoke(llm_messages)
+        TimerNode.mark_completed(conv_id)
+        return ai_response.content
+
+
+class InterviewQuestionNode:
+    """
+    [Agent Node 3: Technical Prober]
+    Conducts adaptive, role-tailored technical probing during the active 5-minute window.
+    """
+    @classmethod
+    async def probe(cls, conv_id: str, resume_context: dict, message_history: list) -> str:
+        inferred_role = resume_context.get("inferred_role", "Software Engineer")
+        role_clause = f"CANDIDATE'S TARGET DOMAIN & ROLE (inferred from resume): {inferred_role}\n"
+
+        system_instruction = (
+            "You are an experienced, adaptive Senior Technical Interviewer conducting a realistic, professional technical assessment.\n\n"
+            f"{role_clause}"
+            f"CANDIDATE STRUCTURED RESUME DATA:\n{json.dumps(resume_context, indent=2)}\n\n"
+            "YOUR CORE OPERATING INSTRUCTIONS:\n"
+            "1. ADAPTIVE TECHNICAL PERSONA:\n"
+            f"   • Conduct the interview tailored to the candidate's inferred role: {inferred_role}.\n"
+            "   • If the resume covers multiple domains (e.g. Full Stack), balance frontend, backend, and architectural topics.\n"
+            "   • Calibrate question depth to the candidate's demonstrated project complexity and seniority.\n"
+            "   • NEVER assume every candidate is a backend developer. Adapt questions strictly to their stated tech stack.\n\n"
+            "2. GROUNDED IN REAL PROJECTS & IMPLEMENTATION DETAILS:\n"
+            "   • Anchor technical questions in the actual projects, libraries, frameworks, and architecture described in their resume.\n"
+            "   • Ask about specific technical trade-offs, scalability bottlenecks, state management, API designs, or edge cases.\n"
+            "   • Do NOT invent fictitious technologies, companies, or experiences absent from their background.\n\n"
+            "3. CONVERSATIONAL CONTINUITY & INTERVIEW PROGRESSION:\n"
+            "   • Acknowledge and briefly critique/evaluate the candidate's previous response before moving to the next question.\n"
+            "   • Ask ONE clear question at a time. Never dump multiple unrelated questions in one turn.\n"
+            "   • If the candidate's answer is brief or lacks depth, probe deeper with a relevant follow-up question.\n\n"
+            "Maintain an encouraging, highly professional, realistic, and technically rigorous interviewing style."
+        )
+
+        llm_payload = [SystemMessage(content=system_instruction)]
+        for msg in message_history:
+            if msg["role"] == "user":
+                llm_payload.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                llm_payload.append(AIMessage(content=msg["content"]))
+
+        ai_response = await llm.ainvoke(llm_payload)
+        return ai_response.content
+
 # ── Health Check Endpoints ────────────────────────────────────
 @app.get("/api/health", tags=["System"])
 @app.get("/health", tags=["System"])
@@ -241,12 +401,16 @@ async def upload_resume(
         profile_key = get_profile_key(conv_id)
         r.set(profile_key, json.dumps(profile_dict))
         print(f"  • Profile saved to Redis key: '{profile_key}'")
+
+        # Initialize official 5-minute timer session in TimerNode
+        time_meta = TimerNode.start_session(conv_id, duration=300)
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [RESUME UPLOAD] Pipeline complete.\n" + "─" * 60 + "\n")
 
         return {
             "status": "Success",
             "conversation_id": conv_id,
-            "extracted_data": profile_dict
+            "extracted_data": profile_dict,
+            "timer_state": time_meta
         }
 
     except HTTPException:
@@ -261,7 +425,7 @@ async def upload_resume(
 @app.post("/chat/", response_model=ChatResponse, tags=["Interview"])
 @app.post("/api/chat", response_model=ChatResponse, tags=["Interview"])
 async def chat_endpoint(payload: ChatRequest):
-    """Main stateful technical interview conversation endpoint."""
+    """Main stateful technical interview conversation endpoint governed by Agent Nodes."""
     if not check_redis():
         raise HTTPException(
             status_code=503,
@@ -287,30 +451,10 @@ async def chat_endpoint(payload: ChatRequest):
         )
 
     resume_context = json.loads(raw_profile)
-    inferred_role = resume_context.get("inferred_role", "Software Engineer")
-    role_clause = f"CANDIDATE'S TARGET DOMAIN & ROLE (inferred from resume): {inferred_role}\n"
 
-    system_instruction = (
-        "You are an experienced, adaptive Senior Technical Interviewer conducting a realistic, professional technical assessment.\n\n"
-        f"{role_clause}"
-        f"CANDIDATE STRUCTURED RESUME DATA:\n{json.dumps(resume_context, indent=2)}\n\n"
-        "YOUR CORE OPERATING INSTRUCTIONS:\n"
-        "1. ADAPTIVE TECHNICAL PERSONA:\n"
-        f"   • Conduct the interview tailored to the candidate's inferred role: {inferred_role}.\n"
-        "   • If the resume covers multiple domains (e.g. Full Stack), balance frontend, backend, and architectural topics.\n"
-        "   • Calibrate question depth to the candidate's demonstrated project complexity and seniority.\n"
-        "   • NEVER assume every candidate is a backend developer. Adapt questions strictly to their stated tech stack.\n\n"
-        "2. GROUNDED IN REAL PROJECTS & IMPLEMENTATION DETAILS:\n"
-        "   • Anchor technical questions in the actual projects, libraries, frameworks, and architecture described in their resume.\n"
-        "   • Ask about specific technical trade-offs, scalability bottlenecks, state management, API designs, or edge cases.\n"
-        "   • Do NOT invent fictitious technologies, companies, or experiences absent from their background.\n\n"
-        "3. CONVERSATIONAL CONTINUITY & INTERVIEW PROGRESSION:\n"
-        "   • Acknowledge and briefly critique/evaluate the candidate's previous response before moving to the next question.\n"
-        "   • Ask ONE clear question at a time. Never dump multiple unrelated questions in one turn.\n"
-        "   • If the candidate's answer is brief or lacks depth, probe deeper with a relevant follow-up question.\n"
-        "   • When wrap-up or performance analysis is requested (e.g. at the end of the session), provide a structured Candidate Analysis Summary with: 1) What the candidate is good at (concrete technical strengths demonstrated), 2) Areas for improvement (specific trade-offs, missed edge cases, concepts to strengthen), and 3) An overall analytical summary & encouraging closing recommendation.\n\n"
-        "Maintain an encouraging, highly professional, realistic, and technically rigorous interviewing style."
-    )
+    # ── Agent Node Step 1: TimerNode Evaluates Session Clock ──
+    time_state = TimerNode.check_time(conv_id)
+    print(f"  • [TimerNode] Remaining: {time_state['formatted_remaining']} (Expired: {time_state['is_expired']}, Status: {time_state['status']})")
 
     user_msg_id = f"msg_{uuid.uuid4().hex[:8]}"
     user_message_data = {
@@ -324,44 +468,75 @@ async def chat_endpoint(payload: ChatRequest):
     r.set(get_message_key(user_msg_id), json.dumps(user_message_data))
     r.rpush(get_conversation_list_key(conv_id), user_msg_id)
 
+    # Retrieve full conversation history
     message_ids = r.lrange(get_conversation_list_key(conv_id), 0, -1)
-    llm_payload = [SystemMessage(content=system_instruction)]
-
+    message_history = []
     for msg_id in message_ids:
         raw_msg = r.get(get_message_key(msg_id))
         if raw_msg:
-            msg_data = json.loads(raw_msg)
-            if msg_data["role"] == "user":
-                llm_payload.append(HumanMessage(content=msg_data["content"]))
-            elif msg_data["role"] == "assistant":
-                llm_payload.append(AIMessage(content=msg_data["content"]))
-
-    print(f"  • Turn #{len(message_ids)} ({len(llm_payload)} messages in context). Sending to Gemini...")
+            message_history.append(json.loads(raw_msg))
 
     try:
         t0 = datetime.now()
-        ai_response = await llm.ainvoke(llm_payload)
-        elapsed = (datetime.now() - t0).total_seconds()
-        print(f"  • Gemini responded in {elapsed:.2f}s")
 
+        # ── Agent Node Step 2: Routing via TimerNode & Context ────
+        is_wrapup_request = (
+            time_state["is_expired"]
+            or "finish" in payload.message.lower()
+            or "wrap up" in payload.message.lower()
+            or "time limit" in payload.message.lower()
+            or "evaluation" in payload.message.lower()
+        )
+
+        if TimerNode.is_time_query(payload.message):
+            # Direct response from TimerNode
+            phase = "time_query"
+            response_content = (
+                f"You have approximately **{time_state['formatted_remaining']}** remaining in this 5-minute technical assessment. "
+                "Whenever you're ready, let's continue with your project explanation!"
+            )
+            print(f"  • [TimerNode] Intercepted time query -> returned {time_state['formatted_remaining']}")
+
+        elif is_wrapup_request:
+            # Route to EvaluationNode
+            phase = "evaluation"
+            print(f"  • [Agent Orchestrator] Routing to EvaluationNode...")
+            response_content = await EvaluationNode.evaluate(conv_id, resume_context, message_history)
+
+        else:
+            # Route to InterviewQuestionNode
+            phase = "interview"
+            print(f"  • [Agent Orchestrator] Routing to InterviewQuestionNode (Turn #{len(message_history)})...")
+            response_content = await InterviewQuestionNode.probe(conv_id, resume_context, message_history)
+
+        elapsed = (datetime.now() - t0).total_seconds()
+        print(f"  • Agent response generated in {elapsed:.2f}s (Phase: {phase})")
+
+        # Save assistant message
         ai_msg_id = f"msg_{uuid.uuid4().hex[:8]}"
         ai_message_data = {
             "message_id": ai_msg_id,
             "conversation_id": conv_id,
             "parent_id": user_msg_id,
             "role": "assistant",
-            "content": ai_response.content,
+            "content": response_content,
             "timestamp": datetime.now(UTC).isoformat()
         }
         r.set(get_message_key(ai_msg_id), json.dumps(ai_message_data))
         r.rpush(get_conversation_list_key(conv_id), ai_msg_id)
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [CHAT REQUEST] Completed successfully.\n" + "─" * 60 + "\n")
 
+        # Re-fetch latest time_state after processing
+        final_time_state = TimerNode.check_time(conv_id)
+
         return ChatResponse(
             conversation_id=conv_id,
             message_id=ai_msg_id,
             parent_id=user_msg_id,
-            response=ai_response.content
+            response=response_content,
+            remaining_seconds=final_time_state["remaining_seconds"],
+            is_expired=final_time_state["is_expired"],
+            phase=phase
         )
 
     except HTTPException:
@@ -370,6 +545,14 @@ async def chat_endpoint(payload: ChatRequest):
         print(f"  [EXCEPTION] LLM Chat Error: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"LLM Chat Error: {str(e)}")
+
+# ── Session Timer Query Endpoint ──────────────────────────────
+@app.get("/api/session/{conversation_id}/timer", tags=["Interview"])
+async def get_session_timer(conversation_id: str):
+    """Queries official time state directly from the agent's TimerNode."""
+    if not check_redis():
+        raise HTTPException(status_code=503, detail="Redis offline.")
+    return TimerNode.check_time(conversation_id)
 
 # ── Speech-to-Text Transcription Endpoint (Universal Cross-Browser) ─
 @app.post("/api/transcribe", tags=["Voice"])

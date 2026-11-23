@@ -422,6 +422,36 @@ function stopInterviewTimer() {
     console.log('[Timer] Stopped and reset.');
 }
 
+function syncTimerWithAgentNode(remainingSeconds, isExpired) {
+    if (typeof remainingSeconds !== 'number') return;
+
+    secondsRemaining = remainingSeconds;
+    const timerDisplay = document.getElementById('timer-display');
+    const timerPill = document.getElementById('interview-timer');
+
+    if (timerDisplay) {
+        timerDisplay.textContent = formatTimer(Math.max(0, secondsRemaining));
+    }
+
+    if (timerPill) {
+        if (secondsRemaining <= 15) {
+            timerPill.classList.remove('warning');
+            timerPill.classList.add('danger');
+        } else if (secondsRemaining <= 60) {
+            timerPill.classList.remove('danger');
+            timerPill.classList.add('warning');
+        } else {
+            timerPill.classList.remove('warning', 'danger');
+        }
+    }
+
+    console.log(`[TimerNode Sync] Synced with backend TimerNode: ${secondsRemaining}s left (isExpired: ${isExpired})`);
+
+    if (isExpired && !isInterviewExpired) {
+        handleInterviewTimeExpired('agent_node');
+    }
+}
+
 function finishInterviewEarly() {
     if (confirm('Finish the interview now and generate your performance analysis summary?')) {
         handleInterviewTimeExpired('early');
@@ -660,6 +690,11 @@ async function triggerKickoff() {
         const data = await res.json();
         lastMessageId = data.message_id;
 
+        // Synchronize local timer with official backend TimerNode
+        if (typeof data.remaining_seconds === 'number') {
+            syncTimerWithAgentNode(data.remaining_seconds, data.is_expired);
+        }
+
         // Render AI opening message
         appendMessage('ai', data.response);
 
@@ -731,7 +766,19 @@ async function sendCandidateMessage() {
         const data = await res.json();
         lastMessageId = data.message_id;
 
+        // Synchronize local timer with official backend TimerNode
+        if (typeof data.remaining_seconds === 'number') {
+            syncTimerWithAgentNode(data.remaining_seconds, data.is_expired);
+        }
+
         appendMessage('ai', data.response);
+
+        // If TimerNode signaled evaluation phase or expiration, update UI accordingly
+        if (data.is_expired || data.phase === 'evaluation') {
+            if (!isInterviewExpired) {
+                handleInterviewTimeExpired('agent_node');
+            }
+        }
 
     } catch (err) {
         removeTyping();
